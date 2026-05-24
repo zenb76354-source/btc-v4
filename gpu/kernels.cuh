@@ -126,17 +126,34 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
         uint32_t X[16];
         for(int i=0;i<16;i++) X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
         
-        uint32_t A=H0,B=H1,C=H2,D=H3,E=H4;
-        uint32_t Ap=H0,Bp=H1,Cp=H2,Dp=H3,Ep=H4;
+        /* استخدام index array للـ state circular shift */
+        uint32_t st[5], stp[5];
+        st[0]=H0; st[1]=H1; st[2]=H2; st[3]=H3; st[4]=H4;
+        stp[0]=H0; stp[1]=H1; stp[2]=H2; stp[3]=H3; stp[4]=H4;
         for(int j=0;j<80;j++){
             int rd=j/16; int p=j%16;
-            uint32_t t=d_rmd_rol(A+d_rmd_fr(rd,B,C,D)+X[R0[rd][p]]+K0[rd],S0[rd][p])+E;
-            A=E;E=D;D=d_rmd_rol(C,10);C=B;B=t;
-            uint32_t tp=d_rmd_rol(Ap+d_rmd_fl(rd,Bp,Cp,Dp)+X[R1[rd][p]]+K1[rd],S1[rd][p])+Ep;
-            Ap=Ep;Ep=Dp;Dp=d_rmd_rol(Cp,10);Cp=Bp;Bp=tp;
+            int i0=0,i1=1,i2=2,i3=3,i4=4;
+            uint32_t f = (rd==0?d_rmd_f1:(rd==1?d_rmd_f2:(rd==2?d_rmd_f3:(rd==3?d_rmd_f4:d_rmd_f5))))(st[i1],st[i2],st[i3]);
+            uint32_t t = st[i0] + f + X[R0[rd][p]] + K0[rd];
+            t = (t<<S0[rd][p])|(t>>(32-S0[rd][p])); t += st[i4];
+            st[i2] = (st[i2]<<10)|(st[i2]>>22);
+            st[i0] = t;
+            /* circular shift: (a,b,c,d,e) → (e,a',rol(c),b,d) */
+            uint32_t tmp[5]; tmp[0]=st[4]; tmp[1]=st[0]; tmp[2]=st[2]; tmp[3]=st[1]; tmp[4]=st[3];
+            st[0]=tmp[0];st[1]=tmp[1];st[2]=tmp[2];st[3]=tmp[3];st[4]=tmp[4];
+            
+            /* parallel line */
+            f = (rd==0?d_rmd_f5:(rd==1?d_rmd_f4:(rd==2?d_rmd_f3:(rd==3?d_rmd_f2:d_rmd_f1))))(stp[i1],stp[i2],stp[i3]);
+            t = stp[i0] + f + X[R1[rd][p]] + K1[rd];
+            t = (t<<S1[rd][p])|(t>>(32-S1[rd][p])); t += stp[i4];
+            stp[i2] = (stp[i2]<<10)|(stp[i2]>>22);
+            stp[i0] = t;
+            /* parallel shift: (Ap,Bp,Cp,Dp,Ep) → (Ep,Ap',rol(Cp),Bp,Dp) */
+            tmp[0]=stp[4]; tmp[1]=stp[0]; tmp[2]=stp[2]; tmp[3]=stp[1]; tmp[4]=stp[3];
+            stp[0]=tmp[0];stp[1]=tmp[1];stp[2]=tmp[2];stp[3]=tmp[3];stp[4]=tmp[4];
         }
-        uint32_t t=H1+C+Dp;H1=H2+D+Ep;H2=H3+E+Ap;
-        H3=H4+A+Bp;H4=H0+B+Cp;H0=t;
+        uint32_t t=H1+st[2]+stp[3];H1=H2+st[3]+stp[4];H2=H3+st[4]+stp[0];
+        H3=H4+st[0]+stp[1];H4=H0+st[1]+stp[2];H0=t;
     }
     out[0]=(uint8_t)H0;out[1]=(uint8_t)(H0>>8);out[2]=(uint8_t)(H0>>16);out[3]=(uint8_t)(H0>>24);
     out[4]=(uint8_t)H1;out[5]=(uint8_t)(H1>>8);out[6]=(uint8_t)(H1>>16);out[7]=(uint8_t)(H1>>24);
