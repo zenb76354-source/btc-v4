@@ -1,0 +1,15 @@
+# Build artifacts
+btc-recovery
+*.o
+*.log
+recovery.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System
+.DS_Store
+Thumbs.db
