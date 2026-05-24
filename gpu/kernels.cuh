@@ -111,22 +111,32 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
     /* left shifts */
     const uint32_t S1[5][16]={            {8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6},{9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11},{9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5},{15,5,8,11,14,14,6,14,6,9,12,9,5,15,11,12},{8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11}};
     
-    uint64_t bitlen=(uint64_t)len*8;
-    uint32_t padded=len+9;
-    uint32_t blkcnt=(padded+63)/64;
+    uint64_t bitlen64=(uint64_t)len*8;
+    /* calculate exact block count matching RFC padding */
+    uint32_t padlen = 1 + ((119 - (len % 64)) % 64);
+    uint32_t blkcnt = (len + padlen + 8 + 63) / 64;
     for(uint32_t b=0;b<blkcnt;b++){
         uint8_t blk[64];
         for(int i=0;i<64;i++)blk[i]=0;
         uint32_t poff=b*64;
-        for(uint32_t i=0;i<64&&(poff+i)<len;i++) blk[i]=msg[poff+i];
-        /* padding: 0x80 after last msg byte, then bit length in last 8 bytes */
-        uint32_t rem = len - b*64;  /* bytes remaining in this block */
-        if(rem < 64) {
+        /* copy message bytes for this block */
+        uint32_t rem = (len > b*64) ? len - b*64 : 0;
+        for(uint32_t i=0;i<rem&&i<64;i++) blk[i]=msg[b*64+i];
+        /* RFC 1321-compliant padding: 0x80 after last msg byte, zeros, then bit-length (little-endian).
+         * Bit-length is ALWAYS in blk[56..63] of the very last block.
+         * If 0x80 doesn't fit (rem>55), it goes at end of this block and bit-length starts next block. */
+        if(rem == 0 && b > 0) {
+            /* pure-padding block: no 0x80 (already placed), just bit-length */
+            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen64>>(i*8));
+        } else if(rem <= 55) {
+            /* 0x80 and bit-length both fit in this block */
             blk[rem] = 0x80;
-            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
-        } else if(b == blkcnt-1) {
-            /* full last block: pad is in a whole new block (this shouldn't happen for RIPEMD160 but be safe) */
-            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
+            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen64>>(i*8));
+        } else if(rem < 64) {
+            /* need an extra block: 0x80 at end of this block, bit-length in next */
+            blk[rem] = 0x80;
+            /* bit-length will be in next block's blk[56..63] (handled by rem==0 case above) */
+        }
         }
         uint32_t X[16];
         for(int i=0;i<16;i++) X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
