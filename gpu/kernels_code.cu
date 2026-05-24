@@ -217,31 +217,57 @@ __global__ void k_sanity(void*f,void*fk){
     check_return(pk,f,fk);
 }
 
-/* DEBUG: تعمق في الفحص */
+/* DEBUG: تعمق في الفحص - SHA256, RIPEMD160, ECC */
 __global__ void k_debug_test(void){
     if(threadIdx.x||blockIdx.x)return;
+    
+    /* 1. اختبار SHA256: SHA256('abc') = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad */
+    uint8_t sha_out[32];
+    d_sha256((const uint8_t*)"abc", 3, sha_out);
+    printf("[DBG1] SHA256(abc)="); for(int i=0;i<32;i++) printf("%02x",sha_out[i]); printf("\n");
+    
+    /* 2. اختبار SHA256('') */
+    d_sha256((const uint8_t*)"", 0, sha_out);
+    printf("[DBG2] SHA256(empty)="); for(int i=0;i<32;i++) printf("%02x",sha_out[i]); printf("\n");
+    
+    /* 3. اختبار RIPEMD160: RIPEMD160('abc') */
+    uint8_t rmd_out[20];
+    d_ripemd160(sha_out, 32, rmd_out);  /* SHA256(abc) -> RIPEMD160 */
+    /* هذا يعطينا hash160 لـ 'abc' */
+    printf("[DBG3] RIPEMD160(SHA256(abc))="); for(int i=0;i<20;i++) printf("%02x",rmd_out[i]); printf("\n");
+    
+    /* 4. اختبار compressed pubkey SHA256 مباشرة */
+    uint8_t comp_pub[33] = {0x02,0x79,0xBE,0x66,0x7E,0xF9,0xDC,0xBB,0xAC,
+                            0x55,0xA0,0x62,0x95,0xCE,0x87,0x0B,0x07,0x02,
+                            0x9B,0xFC,0xDB,0x2D,0xCE,0x28,0xD9,0x59,0xF2,
+                            0x81,0x5B,0x16,0xF8,0x17,0x98};
+    d_sha256(comp_pub, 33, sha_out);
+    printf("[DBG4] SHA256(0279BE...)="); for(int i=0;i<32;i++) printf("%02x",sha_out[i]); printf("\n");
+    d_ripemd160(sha_out, 32, rmd_out);
+    printf("[DBG5] RIPEMD160="); for(int i=0;i<20;i++) printf("%02x",rmd_out[i]); printf("\n");
+    
+    /* Expected compressed hash160 */
+    uint8_t exp_comp[]={0x75,0x1e,0x76,0xe8,0x19,0x91,0x96,0xd4,0x54,0x94,0x1c,0x45,0xd1,0xb3,0xa3,0x23,0xf1,0x43,0x3b,0xd6};
+    int m=1; for(int i=0;i<20;i++) if(rmd_out[i]!=exp_comp[i]){m=0;break;}
+    printf("[DBG6] Compressed hash160 match: %s\n", m?"YES!":"NO");
+    
+    /* 5. اختبار ECC: k[0]=1, الـ hash160 */
+    printf("[DBG7] === ECC TEST ===\n");
     uint64_t k[4];
-    /* ترجمة pk[31]=1 → k[0] = 1 (أقل 64 بت) */
     k[0]=1; k[1]=0; k[2]=0; k[3]=0;
-    printf("[DBG] k[0]=%016llx k[1]=%016llx k[2]=%016llx k[3]=%016llx\n",
-        (unsigned long long)k[0], (unsigned long long)k[1],
-        (unsigned long long)k[2], (unsigned long long)k[3]);
+    printf("[DBG8] k = %016llx%016llx%016llx%016llx\n",
+        (unsigned long long)k[3], (unsigned long long)k[2],
+        (unsigned long long)k[1], (unsigned long long)k[0]);
     
     uint8_t h160[20];
     int ok = d_pk2h160(k, h160);
-    printf("[DBG] d_pk2h160 ok=%d\n", ok);
+    printf("[DBG9] d_pk2h160 ok=%d\n", ok);
     if(ok){
-        printf("[DBG] h160="); for(int i=0;i<20;i++) printf("%02x",h160[i]); printf("\n");
-        /* مقارنة مع compressed */
-        uint8_t exp[]={0x75,0x1e,0x76,0xe8,0x19,0x91,0x96,0xd4,0x54,0x94,0x1c,0x45,0xd1,0xb3,0xa3,0x23,0xf1,0x43,0x3b,0xd6};
-        int m=1; for(int i=0;i<20;i++) if(h160[i]!=exp[i]){m=0;break;}
-        printf("[DBG] Compressed match: %s\n", m?"YES!":"NO");
-        /* مقارنة مع uncompressed */
-        uint8_t exp2[]={0x91,0xb2,0x4b,0xf9,0xf5,0x28,0x85,0x32,0x96,0x0a,0xc6,0x87,0xab,0xb0,0x35,0x12,0x7b,0x1d,0x28,0xa5};
-        m=1; for(int i=0;i<20;i++) if(h160[i]!=exp2[i]){m=0;break;}
-        printf("[DBG] Uncompressed match: %s\n", m?"YES!":"NO");
+        printf("[DBG10] h160="); for(int i=0;i<20;i++) printf("%02x",h160[i]); printf("\n");
+        int mc=1; for(int i=0;i<20;i++) if(h160[i]!=exp_comp[i]){mc=0;break;}
+        printf("[DBG11] Compressed match: %s\n", mc?"YES!":"NO");
     } else {
-        printf("[DBG] SCALAR REJECTED!\n");
+        printf("[DBG12] SCALAR REJECTED!\n");
     }
 }
 
