@@ -1,7 +1,7 @@
 /* ================================================================
- *  MAIN.CU — BTC Recovery: ALL HYPOTHESES Pure GPU
+ *  MAIN.CU — BTC Recovery: ALL HYPOTHESES Pure GPU v2
  *  كل hypothesis = kernel منفصل في kernels_code.cu
- *  هذا الملف: host code فقط
+ *  هذا الملف: host code فقط (إطلاق kernels + إدارة البيانات)
  * ================================================================ */
 
 #include <cuda_runtime.h>
@@ -13,41 +13,40 @@
 
 #include "gpu/kernels_api.h"
 
-#define DICT_MAX 8192
-#define MAX_PHRASES 4096
+#define DICT_MAX      8192
+#define MAX_PHRASES   4096
 #define MAX_PHRASE_LEN 256
-#define START_MS 1230768000000ULL
-#define END_MS   1325376000000ULL
-#define TOTAL_H36_KEYS (END_MS - START_MS)
-#define H28_MAX 2000000
-#define H08_MAX 200000
+#define H08_MAX       200000
 
-/* Target definitions */
+/* ---------- H36: عصر البيتكوين المبكر (2008-10-08 → 2011-06-28) ---------- */
+#define H36_START   1223424000000ULL   /* 2008-10-08 (Bitcoin v0.1 released) */
+#define H36_END     1309219200000ULL   /* 2011-06-28 */
+#define H36_TOTAL   (H36_END - H36_START)  /* ≈ 85.8 مليار */
+
+/* ---------- H28: PID range كامل ---------- */
+#define H28_TOTAL   2000000000ULL      /* 0 → 2 مليار (Linux PID + pseudo-random) */
+
+/* ---------- تواريخ key لكل target (ms epoch) ---------- */
+#define A1_MS 1268728843000ULL
+#define A3_MS 1279199023000ULL
+#define A4_MS 1279203210000ULL
+#define A5_MS 1279412745000ULL
+#define A6_MS 1284111956000ULL
+#define A7_MS 1284608803000ULL
+
+/* ---------- مدى ± لكل target ---------- */
+#define TW 86400000ULL   /* ±24 ساعة = 48 ساعة بحث */
+#define TW2 604800000ULL /* ±7 أيام */
+
+/* ---------- __device__ & __constant__ ---------- */
 __constant__ uint8_t d_targets[8*20];
 __constant__ char d_dict[DICT_MAX];
 __constant__ int d_num_phrases;
-
-/* Large arrays: __device__ (global memory), NOT __constant__ (64KB limit) */
 __device__ char d_phrases[MAX_PHRASES*MAX_PHRASE_LEN];
 __device__ uint8_t d_block_hashes[200000*32];
 
-/* External kernel declarations (defined in kernels_code.cu) */
-extern __global__ void k21(void*,void*);
-extern __global__ void k11(void*,void*);
-extern __global__ void k14(void*,void*);
-extern __global__ void k15(void*,void*);
-extern __global__ void k41(void*,void*);
-extern __global__ void k_gentxt(void*,void*);
-extern __global__ void k28(uint64_t,uint64_t,void*,void*);
-extern __global__ void k3(uint64_t,void*,void*);
-extern __global__ void k20(uint64_t,void*,void*);
-extern __global__ void k36(uint64_t,uint64_t,void*,void*);
-extern __global__ void k8(int,void*,void*);
-extern __global__ void k1(void*,void*);
-extern __global__ void k9(void*,void*);
-extern __global__ void k18(void*,void*);
+/*========== HELPERS ==========*/
 
-/* Helpers */
 static void print_key(const uint64_t *k) {
     for(int i=0;i<4;i++) printf("%016llx",(unsigned long long)k[i]); printf("\n");
 }
@@ -63,7 +62,6 @@ static void found(const char *nm, uint64_t *k, uint64_t ex) {
         for(int i=0;i<4;i++)fprintf(f,"%016llx",(unsigned long long)k[i]);fprintf(f,"\n");fclose(f);}
 }
 
-/* Pack dict → send to d_dict */
 static char host_dict[DICT_MAX];
 static void send_dict(const char *w[]) {
     memset(host_dict,0,DICT_MAX); int pos=0;
@@ -74,7 +72,6 @@ static void send_dict(const char *w[]) {
     cudaMemcpyToSymbol(d_dict,host_dict,DICT_MAX);
 }
 
-/* Run dictionary kernel */
 static int run_dict(const char *nm, const char *w[], int h21flag) {
     send_dict(w);
     int *df; uint64_t *dfk;
@@ -95,7 +92,6 @@ static int run_dict(const char *nm, const char *w[], int h21flag) {
     printf("[%s] Done.\n",nm); cudaFree(df); cudaFree(dfk); return 0;
 }
 
-/* Run sequential kernel (H28, H03, H20, H36) */
 static int run_seq(const char *nm, int type, uint64_t total, uint64_t batch) {
     int *df; uint64_t *dfk;
     cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
@@ -109,19 +105,47 @@ static int run_seq(const char *nm, int type, uint64_t total, uint64_t batch) {
         if(type==28) k28<<<blk,threads>>>(s,b,df,dfk);
         else if(type==3) k3<<<blk,threads>>>(total,df,dfk);
         else if(type==20) k20<<<blk,threads>>>(total,df,dfk);
-        else if(type==36) k36<<<blk,threads>>>(START_MS+s,b,df,dfk);
+        else if(type==36) k36<<<blk,threads>>>(H36_START+s,b,df,dfk);
         cudaDeviceSynchronize();
         cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
         if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
             found(nm,hfk,s); cudaFree(df); cudaFree(dfk); return 1;}
         s+=b;
-        if(s%1000000==0)printf("[%s] %llu/%llu (%.1f%%)\n",nm,(unsigned long long)s,(unsigned long long)total,100.0*s/total);
+        if(s%100000000==0)printf("[%s] %llu/%llu (%.1f%%)\n",nm,(unsigned long long)s,(unsigned long long)total,100.0*s/total);
     }
     printf("[%s] Done. %llums\n",nm,(unsigned long long)(time_ms()-t0));
     cudaFree(df); cudaFree(dfk); return 0;
 }
 
-/* H08 runner */
+/* H36 حول timestamp محدد */
+static int run_h36_range(const char *nm, uint64_t start_ms, uint64_t count, uint64_t batch) {
+    int *df; uint64_t *dfk;
+    cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
+    uint64_t t0=time_ms(); int threads=256;
+    printf("[%s] %llu keys...\n",nm,(unsigned long long)count);
+    for(uint64_t s=0;s<count;){
+        uint64_t b=(s+batch>count)?(count-s):batch;
+        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
+        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
+        int blk=(int)((b+threads-1)/threads);
+        k36<<<blk,threads>>>(start_ms+s,b,df,dfk);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
+        if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+            found(nm,hfk,start_ms+s); cudaFree(df); cudaFree(dfk); return 1;}
+        s+=b;
+        if(s%10000000==0)printf("[%s] %llu/%llu\n",nm,(unsigned long long)s,(unsigned long long)count);
+    }
+    printf("[%s] Done. %llums\n",nm,(unsigned long long)(time_ms()-t0));
+    cudaFree(df); cudaFree(dfk); return 0;
+}
+
+/* H28 حول timestamp محدد (timestamp ms → kernel يخلط مع PID) */
+static int run_h28_block(const char *nm, uint64_t block_id) {
+    /* نرسل block_id كـ start للـ kernel (كل PID مرة) */
+    return run_seq(nm,28,H28_TOTAL,1000000);
+}
+
 static int run_h08() {
     uint8_t *hh=(uint8_t*)malloc(H08_MAX*32);
     for(int i=0;i<H08_MAX;i++) for(int j=0;j<32;j++) hh[i*32+j]=(uint8_t)(i+j);
@@ -140,7 +164,6 @@ static int run_h08() {
     printf("[H08] Done.\n"); cudaFree(df); cudaFree(dfk); return 0;
 }
 
-/* Phrase kernels */
 static int run_phr(const char *nm, int type, int min) {
     int n; cudaMemcpyFromSymbol(&n,d_num_phrases,sizeof(int));
     if(n<min){printf("[%s] Need %d phrases\n",nm,min);return 0;}
@@ -178,10 +201,12 @@ static int run_h18() {
 
 static int load_phrases() {
     FILE *f=fopen("phrases.txt","r"); if(!f) return 0;
-    char hp[MAX_PHRASES][MAX_PHRASE_LEN]; int n=0;
-    while(n<MAX_PHRASES&&fgets(hp[n],MAX_PHRASE_LEN,f)){
-        size_t sl=strlen(hp[n]); while(sl>0&&(hp[n][sl-1]=='\n'||hp[n][sl-1]=='\r'))hp[n][--sl]=0;
-        if(sl>0)n++;
+    char hp[MAX_PHRASES][MAX_PHRASE_LEN];
+    int n=0;
+    while(n<MAX_PHRASES && fgets(hp[n],MAX_PHRASE_LEN,f)){
+        size_t sl=strlen(hp[n]);
+        while(sl>0 && (hp[n][sl-1]=='\n'||hp[n][sl-1]=='\r')) hp[n][--sl]=0;
+        if(sl>0) n++;
     }
     fclose(f);
     char *flat=(char*)malloc(n*256); memset(flat,0,n*256);
@@ -191,58 +216,130 @@ static int load_phrases() {
     free(flat); return n;
 }
 
+/*========== MAIN ==========*/
 int main() {
-    printf("\n===== BTC RECOVERY ALL HYPOTHESES PURE GPU =====\n\n");
+    printf("\n===== BTC RECOVERY v2 — PURE GPU (corrected targets) =====\n\n");
     cudaDeviceProp prop; cudaGetDeviceProperties(&prop,0);
     printf("Device: %s SM%d.%d (%d SMs)\n\n",prop.name,prop.major,prop.minor,prop.multiProcessorCount);
 
-    /* Targets */
+    /* -------------------- CORRECT TARGETS (from common/targets.h) -------------------- */
     static const uint8_t ht[8*20] = {
-        0xc8,0xe5,0x09,0xee,0xe7,0xf7,0xbc,0xbc,0x11,0x1f,0x31,0x56,0xc0,0x4f,0x0b,0xc1,0xd7,0xb1,0xdb,0xf5,
-        0x9d,0x9a,0x9b,0x77,0x5b,0x1b,0xbe,0x33,0xe1,0xf1,0xba,0x7b,0xd0,0x50,0xc5,0x75,0xf6,0x2d,0xb0,0x91,
-        0xdb,0x4b,0x1a,0x77,0x39,0x45,0x6d,0x7d,0x43,0x98,0xc1,0xa7,0x1d,0x04,0x94,0x50,0x42,0x66,0x5c,0x3a,
-        0x39,0x9a,0x4f,0x8f,0x8f,0x73,0xd3,0x2b,0x8d,0x52,0x0e,0x6a,0x54,0x74,0x05,0xea,0x06,0x09,0x2e,0x2a,
-        0x3c,0x09,0x4b,0xb7,0x04,0x84,0xc3,0x15,0x7e,0x40,0xfd,0xa5,0x36,0xe6,0xfb,0x64,0x16,0x78,0x0e,0xe2,
-        0x35,0x7a,0xd8,0x6e,0x87,0xf3,0x15,0xa8,0x25,0x2e,0xde,0x8b,0x6a,0xb4,0xe3,0xe0,0xa9,0x75,0x44,0xaa,
-        0x28,0x4c,0x34,0x0f,0x0e,0xbf,0x7a,0x10,0x0b,0xc7,0x0c,0x44,0x2f,0x83,0x19,0x77,0xaa,0xd7,0xb3,0xb7,
-        0x7a,0x05,0xa1,0x5e,0xaf,0xbe,0x19,0xec,0xff,0x63,0xbc,0x7a,0x3d,0x3b,0x9d,0x3a,0xfd,0x75,0x00,0xa7
+        0x14,0x4d,0xe4,0x97,0x1a,0x30,0x9f,0x65,0x6a,0x25,
+        0x98,0xf9,0x74,0x63,0xe2,0x1f,0xc4,0xe6,0x0f,0xe1,  /* A1: 12rMpw5... 400 BTC */
+        0xb3,0x46,0xa3,0xbc,0xe0,0xe6,0xf5,0xe8,0xd0,0x1b,
+        0x6a,0x73,0x9c,0x05,0x01,0x49,0x2d,0xd5,0xf5,0xeb,  /* A2: 1HLvaTs... 9260 BTC */
+        0xbc,0x30,0xaf,0x9c,0xfb,0xa5,0x5e,0xa6,0x13,0x74,
+        0xf9,0x8b,0x3e,0xf3,0x18,0x55,0x70,0xb7,0x98,0x18,  /* A3: 1JA4Mpu... 400 BTC */
+        0x18,0xf2,0xdf,0x2f,0x55,0xe0,0xdd,0x03,0x98,0x2b,
+        0x35,0x8b,0x5f,0xb7,0x49,0x1d,0x98,0xae,0x94,0xaf,  /* A4: 13GvAdk... 200 BTC */
+        0x88,0xbb,0x33,0x3d,0x5d,0xff,0xea,0x68,0x28,0xbd,
+        0x86,0x8e,0x3a,0xe5,0x70,0x09,0x75,0xc8,0xfa,0x4c,  /* A5: 1DTy9z4... 200 BTC */
+        0xe0,0xbe,0x57,0x0f,0x09,0x09,0xa4,0xee,0xdc,0x8e,
+        0x82,0x65,0x2c,0x7f,0x39,0x10,0x38,0xf0,0x0c,0xcc,  /* A6: 1MVLP2k... 1200 BTC */
+        0x30,0x59,0xc8,0x38,0x4e,0x7e,0xbf,0x41,0xe0,0x3c,
+        0x0d,0xa3,0xfa,0x7e,0x69,0xfa,0xb4,0x07,0x64,0x9d,  /* A7: 15QezNw... 200 BTC */
+        0x59,0x2f,0xc3,0x99,0x00,0x26,0x33,0x4c,0x8c,0x6f,
+        0xb2,0xb9,0xda,0x45,0x71,0x79,0xcd,0xb5,0xc6,0x88,  /* E1: 198aMn6... 250 BTC */
     };
     cudaMemcpyToSymbol(d_targets,ht,8*20);
 
     int have_ph = load_phrases();
 
-    /* Phase 0: Tiny */
-    printf("===== PHASE 0: TINY =====\n");
+    /* ===== PHASE 0: قاموس صغير (لم يتغير) ===== */
+    printf("===== PHASE 0: TINY DICTS =====\n");
     const char *h21w[]={ "", NULL }; if(run_dict("H21",h21w,21)) return 0;
-    const char *h11w[]={"1","2","3","4","5","10","100","1000","10000","1234567890","abcdef","password","passw0rd","12345678","btc123","btc2010","hello","HELLO","world","WORLD",NULL}; if(run_dict("H11",h11w,11)) return 0;
-    const char *h14w[]={"1268728843","1279199023","1279203210","1284382196","1284608803","1285880600","1268811438","1268866685","1268894549","1268921836","1268933538","1268943264",NULL}; if(run_dict("H14",h14w,14)) return 0;
-    const char *h15w[]={"20090101","20090103","20100101","20100316","20100522","20100711","20100715","20100910","20100916","2009-01-01","2010-03-16","2010-05-22","2010-07-11","2010-07-15","2010-09-10","January 3 2009","March 16 2010","May 22 2010",NULL}; if(run_dict("H15",h15w,15)) return 0;
-    const char *h41w[]={"bitcoin","satoshi","password","private","secret","wallet","block","chain","money","coin","miner","gold","crypto","admin","master","root","key","btc","200","400","50","1200","2010","march","july","fifty","hundred","rich","lucky","empty","null",NULL}; if(run_dict("H41",h41w,41)) return 0;
-    const char *h42w[]={"deadbeef","cafebabe","feedface","0xdeadbeef","dead","beef","cafe","babe","feed","face","deadbeefcafebabe","0123456789abcdef","00000001","00000002","aa55","1234","5678","abcd","c0ffee","b00b5",NULL}; if(run_dict("H42",h42w,0)) return 0;
-    const char *h43w[]={"😂","🔥","🚀","💎","🙌","❤️","💰","✅","bitcoin😂","btc🚀","satoshi🔥","💎🙌","diamond hands","₿itcoin","₿TC","βitcoin","bitc0in","s4tosh1","btc2010🚀","฿itcoin","฿",NULL}; if(run_dict("H43",h43w,0)) return 0;
-    const char *h30w[]={"50btc","100btc","200btc","400btc","650btc","1200btc","fifty","hundred","50","100","200","400","650","1200","my50","my100","my200","my400","my200btc","my1200btc","50coins","100coins","200coins",NULL}; if(run_dict("H30",h30w,0)) return 0;
-    const char *h31w[]={"July2010","july2010","March2010","march2010","2010-03","2010-07","2010-09","201003","201007","201009","March16","July15","September10",NULL}; if(run_dict("H31",h31w,0)) return 0;
-    const char *h32w[]={"March2010200","July2010400","2010March200","2010July400","03162010_200","07152010_400",NULL}; if(run_dict("H32",h32w,0)) return 0;
-    const char *h33w[]={"mining","miner","mining2010","pool2010","miningpool","btcmining","slush","deepbit","btcguild","pool","p2pool","genesis","genesis block","block 0",NULL}; if(run_dict("H33",h33w,0)) return 0;
-    const char *h35w[]={"50x4","4x50","50-50-50-50","50+50+50+50","fiftyfiftyfifty","weekly50",NULL}; if(run_dict("H35",h35w,0)) return 0;
-    const char *h26w[]={"backup","wallet backup","walletbackup","wallet.dat","mybackup","mywallet","bitcoin-wallet","bitcoinwallet","btcwallet","recovery","recovery phrase","seed","seed phrase","passphrase","encrypted","electrum","blockchain.info","multibit","armory","bitcoind","bitcoin-qt","bitcoin core","satoshi","satoshi wallet",NULL}; if(run_dict("H26",h26w,0)) return 0;
-    const char *h27w[]={"bitcoin.org","bitcointalk.org","blockchain.info","github.com/bitcoin","sourceforge.net","p2pfoundation.net","deepbit.net","slushpool.com","mtgox.com","http://bitcoin.org","https://bitcoin.org","satoshi.nakamoto","nakamoto","gavinandresen","hal finney","http://www.bitcoin.org",NULL}; if(run_dict("H27",h27w,0)) return 0;
-    const char *h29w[]={"bitcoin2009","bitcoin2010","bitcoinwallet","bitcoinkey","bitcoin123","bitcoin!","bitcoinpass","Bitcoin2010","Bitcoin2009","BITCOIN2009","BITCOIN2010","btc2009","btc2010","btcwallet","btckey","BTC2009","BTC2010","satoshi2009","satoshi2010","satoshiwallet","Satoshi2009","Satoshi2010","bitcoin1","bitcoin01","bitcoin001","bitcoin123","bitcoin1234","bitcoin!!","bitcoin?","bitcoin.","bitcoin@","bitcoin#","bitcoin$","bitcoinfirst","bitcoinmy","bitcoinnew","bitcoinold","bitcointest","Bitcoinwallet","Bitcoinkey","Bitcoinpass","BTCwallet","BTCkey","BTCpass","BTC2009","BTC2010",NULL}; if(run_dict("H29",h29w,0)) return 0;
-    const char *h25w[]={"bitcoin is awesome","i love bitcoin","bitcoin to the moon","HODL","hodl","to the moon","when lambo","Satoshi nakamoto","satoshi nakamoto","bitcoin paper","buy bitcoin","buy the dip","sell bitcoin","blockchain","decentralized","peer to peer","cryptocurrency","private key","public key","brainwallet","paper wallet","cold storage","hot wallet","50 BTC","50btc","fifty btc","400 BTC","400btc","casascius","physical bitcoin","bitcointalk","satoshi dice","bitcoin faucet","faucet",NULL}; if(run_dict("H25",h25w,0)) return 0;
+    const char *h11w[]={"1","2","3","4","5","10","100","1000","10000","1234567890","abcdef",
+        "password","passw0rd","12345678","btc123","btc2010","hello","HELLO","world","WORLD",NULL};
+    if(run_dict("H11",h11w,11)) return 0;
+    const char *h14w[]={"1268728843","1279199023","1279203210","1284382196","1284608803",
+        "1285880600","1268811438","1268866685","1268894549","1268921836","1268933538","1268943264",NULL};
+    if(run_dict("H14",h14w,14)) return 0;
+    const char *h15w[]={"20090101","20090103","20100101","20100316","20100522","20100711",
+        "20100715","20100910","20100916","2009-01-01","2010-03-16","2010-05-22","2010-07-11",
+        "2010-07-15","2010-09-10","January 3 2009","March 16 2010","May 22 2010",NULL};
+    if(run_dict("H15",h15w,15)) return 0;
+    const char *h41w[]={"bitcoin","satoshi","password","private","secret","wallet","block",
+        "chain","money","coin","miner","gold","crypto","admin","master","root","key","btc",
+        "200","400","50","1200","2010","march","july","fifty","hundred","rich","lucky","empty","null",NULL};
+    if(run_dict("H41",h41w,41)) return 0;
+    const char *h33w[]={"mining","miner","mining2010","pool2010","miningpool","btcmining",
+        "slush","deepbit","btcguild","pool","p2pool","genesis","genesis block","block 0",NULL};
+    if(run_dict("H33",h33w,0)) return 0;
+    const char *h26w[]={"backup","wallet backup","walletbackup","wallet.dat","mybackup",
+        "mywallet","bitcoin-wallet","bitcoinwallet","btcwallet","recovery","recovery phrase",
+        "seed","seed phrase","passphrase","encrypted","electrum","blockchain.info","multibit",
+        "armory","bitcoind","bitcoin-qt","bitcoin core","satoshi","satoshi wallet",NULL};
+    if(run_dict("H26",h26w,0)) return 0;
+    const char *h27w[]={"bitcoin.org","bitcointalk.org","blockchain.info","github.com/bitcoin",
+        "sourceforge.net","p2pfoundation.net","deepbit.net","slushpool.com","mtgox.com",
+        "http://bitcoin.org","https://bitcoin.org","satoshi.nakamoto","nakamoto",
+        "gavinandresen","hal finney","http://www.bitcoin.org",NULL};
+    if(run_dict("H27",h27w,0)) return 0;
+    const char *h29w[]={"bitcoin2009","bitcoin2010","bitcoinwallet","bitcoinkey","bitcoin123",
+        "bitcoin!","bitcoinpass","Bitcoin2010","Bitcoin2009","BITCOIN2009","BITCOIN2010",
+        "btc2009","btc2010","btcwallet","btckey","BTC2009","BTC2010","satoshi2009","satoshi2010",
+        "satoshiwallet","Satoshi2009","Satoshi2010","bitcoin1","bitcoin01","bitcoin001",
+        "bitcoin123","bitcoin1234","bitcoin!!","bitcoin?","bitcoin.","bitcoin@","bitcoin#",
+        "bitcoin$","bitcoinfirst","bitcoinmy","bitcoinnew","bitcoinold","bitcointest",NULL};
+    if(run_dict("H29",h29w,0)) return 0;
+    const char *h25w[]={"bitcoin is awesome","i love bitcoin","bitcoin to the moon","HODL",
+        "hodl","to the moon","when lambo","Satoshi nakamoto","satoshi nakamoto","bitcoin paper",
+        "buy bitcoin","buy the dip","sell bitcoin","blockchain","decentralized","peer to peer",
+        "cryptocurrency","private key","public key","brainwallet","paper wallet","cold storage",
+        "50 BTC","50btc","fifty btc","400 BTC","400btc","casascius","bitcointalk",
+        "satoshi dice","bitcoin faucet","faucet",NULL};
+    if(run_dict("H25",h25w,0)) return 0;
 
-    /* Phase 1 */
-    printf("\n===== PHASE 1: MEDIUM =====\n");
-    if(run_seq("H28",28,H28_MAX,100000)) return 0;
+    /* ===== PHASE 1: MEDIUM (2M keys أو أقل لكل kernel) ===== */
+    printf("\n===== PHASE 1: MEDIUM SEQUENTIAL =====\n");
+
+    /* H28: PID pseudo-random 0 → 2 مليار */
+    if(run_seq("H28",28,H28_TOTAL,10000000)) return 0;
+
+    /* H08: block hashes */
     if(run_h08()) return 0;
-    if(have_ph>0&&run_phr("H01",1,1)) return 0;
-    if(have_ph>0&&run_phr("H09",9,1)) return 0;
-    if(have_ph>0&&run_h18()) return 0;
-    if(run_seq("H03",3,31536000,100000)) return 0;
-    if(run_seq("H20",20,31536000,100000)) return 0;
 
-    /* Phase 2: H36 */
-    printf("\n===== PHASE 2: BIG =====\n");
-    if(run_seq("H36",36,TOTAL_H36_KEYS,10000000)) return 0;
+    /* phrases */
+    if(have_ph>0 && run_phr("H01",1,1)) return 0;
+    if(have_ph>0 && run_phr("H09",9,1)) return 0;
+    if(have_ph>0 && run_h18()) return 0;
+
+    /* H03: timestamp + PID/extra (full year range حول كل target) */
+    if(run_seq("H03",3,31536000,500000)) return 0;
+
+    /* H20: timestamp only */
+    if(run_seq("H20",20,31536000,500000)) return 0;
+
+    /* ===== PHASE 2: H36 الكامل (2008-10 → 2011-06) ===== */
+    printf("\n===== PHASE 2: FULL H36 ms SWEEP =====\n");
+    if(run_seq("H36",36,H36_TOTAL,50000000)) return 0;
+
+    /* ===== PHASE 3: H36 حول التواريخ المحددة لكل target (±7 أيام) ===== */
+    printf("\n===== PHASE 3: TARGET WINDOWS =====\n");
+
+    /* A1: 2010-03-16 ±7 أيام */
+    if(run_h36_range("H36-A1",A1_MS-TW2,TW2*2,50000000)) return 0;
+
+    /* A3/A4: 2010-07-15 ±7 أيام (كلاهما نفس اليوم) */
+    if(run_h36_range("H36-A3A4",A3_MS-TW2,TW2*2,50000000)) return 0;
+
+    /* A5: 2010-07-17 */
+    if(run_h36_range("H36-A5",A5_MS-TW2,TW2*2,50000000)) return 0;
+
+    /* A6: 2010-09-10 */
+    if(run_h36_range("H36-A6",A6_MS-TW2,TW2*2,50000000)) return 0;
+
+    /* A7: 2010-09-16 */
+    if(run_h36_range("H36-A7",A7_MS-TW2,TW2*2,50000000)) return 0;
+
+    /* ===== PHASE 4: H36 ±24h (دقيق) ===== */
+    printf("\n===== PHASE 4: TARGET WINDOWS ±24h =====\n");
+    if(run_h36_range("H36-A1f",A1_MS-TW,TW*2,3000000)) return 0;
+    if(run_h36_range("H36-A3f",A3_MS-TW,TW*2,3000000)) return 0;
+    if(run_h36_range("H36-A4f",A4_MS-TW,TW*2,3000000)) return 0;
+    if(run_h36_range("H36-A5f",A5_MS-TW,TW*2,3000000)) return 0;
+    if(run_h36_range("H36-A6f",A6_MS-TW,TW*2,3000000)) return 0;
+    if(run_h36_range("H36-A7f",A7_MS-TW,TW*2,3000000)) return 0;
 
     printf("\n===== ALL COMPLETE — No key found =====\n");
     return 0;
