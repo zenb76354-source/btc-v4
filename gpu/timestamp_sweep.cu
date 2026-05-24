@@ -83,6 +83,10 @@ int h36_timestamp_ms_sweep(void) {
     uint64_t processed = 0;
     int found = 0;
 
+    #ifdef _OPENMP
+    omp_set_num_threads(omp_get_max_threads());
+    #endif
+
     while (processed < NUM_MS && !found) {
         uint64_t batch_size = KEYS_PER_BATCH;
         if (processed + batch_size > NUM_MS)
@@ -97,13 +101,49 @@ int h36_timestamp_ms_sweep(void) {
 
         cudaMemcpy(h_keys, gpu_keys, batch_size * 32, cudaMemcpyDeviceToHost);
 
-        /* CPU verification of this batch */
-        for (uint64_t ki = 0; ki < batch_size && !found; ki++) {
-            uint8_t *pk = h_keys + ki * 32;
-            found = check_privkey_multi(ctx, pk);
+        /* CPU verification with OpenMP — each thread has own secp256k1 ctx */
+        volatile int omp_found = 0;
+        uint64_t omp_found_idx = 0;
+        uint8_t omp_found_key[32];
+
+        int max_t = 1;
+        #ifdef _OPENMP
+        max_t = omp_get_max_threads();
+        #endif
+        secp256k1_context **tctxs = (secp256k1_context**)malloc(max_t * sizeof(secp256k1_context*));
+        for (int ti = 0; ti < max_t; ti++)
+            tctxs[ti] = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+
+        #pragma omp parallel for
+        for (uint64_t ki = 0; ki < batch_size; ki++) {
+            if (omp_found) continue;
+            #ifdef _OPENMP
+            secp256k1_context *tctx = tctxs[omp_get_thread_num()];
+            #else
+            secp256k1_context *tctx = tctxs[0];
+            #endif
+            if (check_privkey_multi(tctx, h_keys + ki * 32)) {
+                #pragma omp critical
+                {
+                    if (!omp_found) {
+                        omp_found = 1;
+                        omp_found_idx = processed + ki;
+                        memcpy(omp_found_key, h_keys + ki * 32, 32);
+                        found = 1;
+                    }
+                }
+            }
         }
 
+        for (int ti = 0; ti < max_t; ti++)
+            secp256k1_context_destroy(tctxs[ti]);
+        free(tctxs);
+
         processed += batch_size;
+
+        if (omp_found) {
+            log_msg("[H36] FOUND at offset %llu!", (unsigned long long)omp_found_idx);
+        }
 
         log_msg("[H36] %llu / %llu (%.1f%%)",
                 (unsigned long long)processed,
