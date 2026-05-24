@@ -417,4 +417,9 @@ __device__ static void d_fe_reduce(d_fe *r) {
             uint64_t sub = (i == 0) ? P0 : 0xFFFFFFFFFFFFFFFFULL;
             uint64_t v = r->d[i] - sub - b;
             r->d[i] = v;
-            b = (r
+            b = (r->d[i] < sub + b) ? 1 : 0;
+        }
+    }
+}
+
+#endif  /* KERNELS_CUH */
