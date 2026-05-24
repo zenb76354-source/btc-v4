@@ -1,7 +1,6 @@
 /* ================================================================
- *  KERNELS.CUH — Full ECC on GPU: SHA256 + RIPEMD160 + secp256k1
- *
- *  كل العمليات عالـ GPU — نسخة جديدة مع secp256k1 field ops
+ *  KERNELS.CUH — Full ECC on GPU
+ *  كل الـ tables داخل الـ functions مش static const (عشان constant memory)
  * ================================================================ */
 
 #ifndef KERNELS_CUH
@@ -22,23 +21,11 @@ __device__ static uint32_t d_s1(uint32_t x) { return d_rot(x,6) ^ d_rot(x,11) ^ 
 __device__ static uint32_t d_w0(uint32_t x) { return d_rot(x,7) ^ d_rot(x,18) ^ (x >> 3); }
 __device__ static uint32_t d_w1(uint32_t x) { return d_rot(x,17) ^ d_rot(x,19) ^ (x >> 10); }
 
-__device__ static const uint32_t d_K256[64] = {
-    0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
-    0xD807AA98,0x12835B01,0x243185BE,0x550C7DC3,0x72BE5D74,0x80DEB1FE,0x9BDC06A7,0xC19BF174,
-    0xE49B69C1,0xEFBE4786,0x0FC19DC6,0x240CA1CC,0x2DE92C6F,0x4A7484AA,0x5CB0A9DC,0x76F988DA,
-    0x983E5152,0xA831C66D,0xB00327C8,0xBF597FC7,0xC6E00BF3,0xD5A79147,0x06CA6351,0x14292967,
-    0x27B70A85,0x2E1B2138,0x4D2C6DFC,0x53380D13,0x650A7354,0x766A0ABB,0x81C2C92E,0x92722C85,
-    0xA2BFE8A1,0xA81A664B,0xC24B8B70,0xC76C51A3,0xD192E819,0xD6990624,0xF40E3585,0x106AA070,
-    0x19A4C116,0x1E376C08,0x2748774C,0x34B0BCB5,0x391C0CB3,0x4ED8AA4A,0x5B9CCA4F,0x682E6FF3,
-    0x748F82EE,0x78A5636F,0x84C87814,0x8CC70208,0x90BEFFFA,0xA4506CEB,0xBEF9A3F7,0xC67178F2
-};
-
 __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32]) {
     uint32_t H[8] = {0x6A09E667,0xBB67AE85,0x3C6EF372,0xA54FF53A,
                      0x510E527F,0x9B05688C,0x1F83D9AB,0x5BE0CD19};
-    uint32_t W[64], a,b,c,d,e,f,g,h,T1,T2;
+    uint32_t W[64];
     uint8_t block[64]; uint64_t bits = (uint64_t)len * 8;
-
     for(int i=0;i<64;i++) block[i]=0;
     for(uint32_t i=0;i<len;i++) block[i]=msg[i];
     block[len]=0x80;
@@ -47,13 +34,26 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
     for(int i=0;i<16;i++)
         W[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
              ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
+
+    /* K256 when needed—inline to avoid constant mem */
+    const uint32_t K256[64] = {
+        0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
+        0xD807AA98,0x12835B01,0x243185BE,0x550C7DC3,0x72BE5D74,0x80DEB1FE,0x9BDC06A7,0xC19BF174,
+        0xE49B69C1,0xEFBE4786,0x0FC19DC6,0x240CA1CC,0x2DE92C6F,0x4A7484AA,0x5CB0A9DC,0x76F988DA,
+        0x983E5152,0xA831C66D,0xB00327C8,0xBF597FC7,0xC6E00BF3,0xD5A79147,0x06CA6351,0x14292967,
+        0x27B70A85,0x2E1B2138,0x4D2C6DFC,0x53380D13,0x650A7354,0x766A0ABB,0x81C2C92E,0x92722C85,
+        0xA2BFE8A1,0xA81A664B,0xC24B8B70,0xC76C51A3,0xD192E819,0xD6990624,0xF40E3585,0x106AA070,
+        0x19A4C116,0x1E376C08,0x2748774C,0x34B0BCB5,0x391C0CB3,0x4ED8AA4A,0x5B9CCA4F,0x682E6FF3,
+        0x748F82EE,0x78A5636F,0x84C87814,0x8CC70208,0x90BEFFFA,0xA4506CEB,0xBEF9A3F7,0xC67178F2
+    };
+
     for(int i=16;i<64;i++)
         W[i]=d_w1(W[i-2])+W[i-7]+d_w0(W[i-15])+W[i-16];
 
-    a=H[0];b=H[1];c=H[2];d=H[3];e=H[4];f=H[5];g=H[6];h=H[7];
+    uint32_t a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
     for(int i=0;i<64;i++){
-        T1=h+d_s1(e)+d_ch(e,f,g)+d_K256[i]+W[i];
-        T2=d_s0(a)+d_maj(a,b,c);
+        uint32_t T1=h+d_s1(e)+d_ch(e,f,g)+K256[i]+W[i];
+        uint32_t T2=d_s0(a)+d_maj(a,b,c);
         h=g;g=f;f=e;e=d+T1;d=c;c=b;b=a;a=T1+T2;
     }
     H[0]+=a;H[1]+=b;H[2]+=c;H[3]+=d;H[4]+=e;H[5]+=f;H[6]+=g;H[7]+=h;
@@ -64,7 +64,7 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
 }
 
 /* ================================================================
- *  RIPEMD-160
+ *  RIPEMD-160 (local tables only — no static const)
  * ================================================================ */
 
 __device__ static uint32_t d_rol32(uint32_t x, int n) { return (x<<n)|(x>>(32-n)); }
@@ -137,46 +137,43 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
 #define FE_L 4
 typedef struct { uint64_t d[FE_L]; } d_fe;
 
-__device__ static const uint64_t d_P[FE_L] = {
-    0xFFFFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFFFFULL,
-    0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL
-};
-__device__ static const uint64_t d_N[FE_L] = {
-    0xBFD25E8CD0364141ULL, 0xBAAEDCE6AF48A03BULL,
-    0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
-};
-__device__ static const d_fe d_Gx = {{
-    0x79BE667EF9DCBBACULL, 0x55A06295CE870B07ULL,
-    0x029BFCDB2DCE28D9ULL, 0x59F2815B16F81798ULL
-}};
-__device__ static const d_fe d_Gy = {{
-    0x483ADA7726A3C465ULL, 0x5DA4FBFC0E1108A8ULL,
-    0xFD17B448A6855419ULL, 0x9C47D08FFB10D4B8ULL
-}};
+/* P, N, Gx, Gy as macros to avoid __device__ const storage */
+#define D_P0  0xFFFFFFFEFFFFFC2FULL
+#define D_P1  0xFFFFFFFFFFFFFFFFULL
+#define D_P2  0xFFFFFFFFFFFFFFFFULL
+#define D_P3  0xFFFFFFFFFFFFFFFFULL
+
+#define D_N0  0xBFD25E8CD0364141ULL
+#define D_N1  0xBAAEDCE6AF48A03BULL
+#define D_N2  0xFFFFFFFFFFFFFFFEULL
+#define D_N3  0xFFFFFFFFFFFFFFFFULL
 
 __device__ static void fe_zero(d_fe *r) { for(int i=0;i<FE_L;i++) r->d[i]=0; }
 __device__ static void fe_one(d_fe *r) { fe_zero(r); r->d[0]=1; }
 __device__ static void fe_copy(d_fe *r, const d_fe *a) { for(int i=0;i<FE_L;i++) r->d[i]=a->d[i]; }
 __device__ static int fe_is_zero(const d_fe *a) { return (a->d[0]|a->d[1]|a->d[2]|a->d[3])==0; }
 
-__device__ static int fe_ge(const d_fe *a, const d_fe *b) {
-    for(int i=FE_L-1;i>=0;i--){
-        if(a->d[i]>b->d[i])return 1;
-        if(a->d[i]<b->d[i])return 0;
-    }
-    return 1;
+__device__ static int fe_ge_p(const d_fe *a) {
+    /* compare >= P */
+    if(a->d[3]<D_P3) return 0;
+    if(a->d[3]>D_P3) return 1;
+    if(a->d[2]<D_P2) return 0;
+    if(a->d[2]>D_P2) return 1;
+    if(a->d[1]<D_P1) return 0;
+    if(a->d[1]>D_P1) return 1;
+    return a->d[0]>=D_P0?1:0;
 }
 
 __device__ static void fe_add(d_fe *r, const d_fe *a, const d_fe *b) {
     uint64_t c=0;
     for(int i=0;i<FE_L;i++){
         uint64_t s=a->d[i]+b->d[i]+c;
-        r->d[i]=s; c=(s<a->d[i]||(s==a->d[i]&&c))?1:0;
+        r->d[i]=s; c=(s<a->d[i])?1:((s==a->d[i])?c:0);
     }
-    if(c||fe_ge(r,(const d_fe*)d_P)){
+    if(c||fe_ge_p(r)){
         uint64_t b2=0;
         for(int i=0;i<FE_L;i++){
-            uint64_t sub=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t sub=(i==0)?D_P0:0xFFFFFFFFFFFFFFFFULL;
             uint64_t v=r->d[i]-sub-b2;
             r->d[i]=v; b2=(v>r->d[i])?1:0;
         }
@@ -192,7 +189,7 @@ __device__ static void fe_sub(d_fe *r, const d_fe *a, const d_fe *b) {
     if(borrow){
         uint64_t carry=0;
         for(int i=0;i<FE_L;i++){
-            uint64_t add=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t add=(i==0)?D_P0:0xFFFFFFFFFFFFFFFFULL;
             uint64_t v=r->d[i]+add+carry;
             r->d[i]=v; carry=(v<add||(v==add&&carry))?1:0;
         }
@@ -210,27 +207,53 @@ __device__ static void fe_mul(d_fe *r, const d_fe *a, const d_fe *b) {
         }
         t[i+FE_L]+=carry;
     }
-    /* Copy lower half */
-    for(int i=0;i<FE_L;i++) r->d[i]=t[i];
-    /* If r >= P, subtract P once */
-    if(fe_ge(r,(const d_fe*)d_P)){
-        uint64_t borrow=0;
+    /* Lower 4 limbs = product mod 2^256 */
+    d_fe r2;
+    r2.d[0]=t[0]; r2.d[1]=t[1]; r2.d[2]=t[2]; r2.d[3]=t[3];
+    if(fe_ge_p(&r2)){
+        uint64_t bor=0;
         for(int i=0;i<FE_L;i++){
-            uint64_t sub=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
-            uint64_t v=r->d[i]-sub-borrow;
-            r->d[i]=v; borrow=(v>r->d[i])?1:0;
+            uint64_t sub=(i==0)?D_P0:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t v=r2.d[i]-sub-bor;
+            r2.d[i]=v; bor=(v>r2.d[i])?1:0;
         }
     }
+    fe_copy(r,&r2);
 }
 
-__device__ static void fe_sqr(d_fe *r, const d_fe *a) { fe_mul(r,a,a); }
+__device__ static void fe_sqr(d_fe *r, const d_fe *a) {
+    /* Same as fe_mul but with a=a */
+    uint64_t t[8]={0};
+    for(int i=0;i<FE_L;i++){
+        uint64_t carry=0;
+        for(int j=0;j<FE_L;j++){
+            __uint128_t prod=(__uint128_t)a->d[i]*a->d[j]+t[i+j]+carry;
+            t[i+j]=(uint64_t)prod;
+            carry=(uint64_t)(prod>>64);
+        }
+        t[i+FE_L]+=carry;
+    }
+    d_fe r2;
+    r2.d[0]=t[0]; r2.d[1]=t[1]; r2.d[2]=t[2]; r2.d[3]=t[3];
+    if(fe_ge_p(&r2)){
+        uint64_t bor=0;
+        for(int i=0;i<FE_L;i++){
+            uint64_t sub=(i==0)?D_P0:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t v=r2.d[i]-sub-bor;
+            r2.d[i]=v; bor=(v>r2.d[i])?1:0;
+        }
+    }
+    fe_copy(r,&r2);
+}
 
 __device__ static void fe_inv(d_fe *r, const d_fe *a) {
+    /* a^(p-2) mod p — Fermat */
     d_fe base,res;
     fe_copy(&base,a);
     fe_one(&res);
-    uint64_t exp[4]={0xFFFFFFFEFFFFFC2DULL,0xFFFFFFFFFFFFFFFFULL,
-                     0xFFFFFFFFFFFFFFFFULL,0xFFFFFFFFFFFFFFFFULL};
+    /* exponent = p-2 = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2D */
+    const uint64_t exp[4]={0xFFFFFFFEFFFFFC2DULL,0xFFFFFFFFFFFFFFFFULL,
+                           0xFFFFFFFFFFFFFFFFULL,0xFFFFFFFFFFFFFFFFULL};
     for(int bit=0;bit<256;bit++){
         if(exp[bit/64]&(1ULL<<(bit%64))) fe_mul(&res,&res,&base);
         fe_sqr(&base,&base);
@@ -246,24 +269,30 @@ typedef struct { d_fe x,y,z; } d_jac;
 
 __device__ static void jac_inf(d_jac *p) { fe_zero(&p->x); fe_zero(&p->y); fe_zero(&p->z); }
 __device__ static int jac_is_inf(const d_jac *p) { return fe_is_zero(&p->z); }
-__device__ static void jac_g(d_jac *p) { fe_copy(&p->x,&d_Gx); fe_copy(&p->y,&d_Gy); fe_one(&p->z); }
+__device__ static void jac_g(d_jac *p) {
+    p->x.d[0]=0x79BE667EF9DCBBACULL; p->x.d[1]=0x55A06295CE870B07ULL;
+    p->x.d[2]=0x029BFCDB2DCE28D9ULL; p->x.d[3]=0x59F2815B16F81798ULL;
+    p->y.d[0]=0x483ADA7726A3C465ULL; p->y.d[1]=0x5DA4FBFC0E1108A8ULL;
+    p->y.d[2]=0xFD17B448A6855419ULL; p->y.d[3]=0x9C47D08FFB10D4B8ULL;
+    fe_one(&p->z);
+}
 __device__ static void jac_cp(d_jac *r, const d_jac *a) { fe_copy(&r->x,&a->x); fe_copy(&r->y,&a->y); fe_copy(&r->z,&a->z); }
 
 __device__ static void jac_double(d_jac *r, const d_jac *p) {
     if(jac_is_inf(p)){jac_inf(r);return;}
-    d_fe m,s,t,x3,y3,z3,y2,y4;
+    d_fe m,s,t,x3,y3,z3;
     fe_sqr(&t,&p->x);
     fe_add(&m,&t,&t); fe_add(&m,&m,&t);
-    fe_sqr(&y2,&p->y);
-    fe_sqr(&y4,&y2);
-    fe_mul(&s,&p->x,&y2);
+    fe_sqr(&t,&p->y);
+    fe_mul(&s,&p->x,&t);
     fe_add(&s,&s,&s); fe_add(&s,&s,&s);
     fe_sqr(&x3,&m);
     fe_sub(&x3,&x3,&s); fe_sub(&x3,&x3,&s);
     fe_sub(&t,&s,&x3);
     fe_mul(&y3,&m,&t);
-    fe_add(&z3,&y4,&y4); fe_add(&z3,&z3,&z3); fe_add(&z3,&z3,&z3);
-    fe_sub(&y3,&y3,&z3);
+    fe_sqr(&t,&t);
+    fe_add(&t,&t,&t); fe_add(&t,&t,&t); fe_add(&t,&t,&t);
+    fe_sub(&y3,&y3,&t);
     fe_mul(&z3,&p->y,&p->z); fe_add(&z3,&z3,&z3);
     fe_copy(&r->x,&x3); fe_copy(&r->y,&y3); fe_copy(&r->z,&z3);
 }
@@ -283,7 +312,7 @@ __device__ static void jac_add_mixed(d_jac *r, const d_jac *a, const d_jac *b) {
     fe_sub(&rr,&s2,&s1); fe_add(&rr,&rr,&rr);
     fe_sqr(&r->x,&rr);
     fe_sub(&r->x,&r->x,&i);
-    fe_add(&vv,&z1z1,&z1z1); /* v = 2*z1z1 = 2*U1*H² */
+    fe_add(&vv,&z1z1,&z1z1);
     fe_sub(&r->x,&r->x,&vv);
     fe_sub(&r->y,&vv,&r->x);
     fe_mul(&r->y,&r->y,&rr);
@@ -313,23 +342,19 @@ __device__ static void jac_mul_g(d_jac *r, const uint64_t k[FE_L]) {
 }
 
 /* ================================================================
- *  d_pk2h160: private key → hash160
- *  Fully on GPU — no CPU involvement
+ *  d_pk2h160: private key → hash160 (Full GPU)
  * ================================================================ */
 
 __device__ static int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
-    /* Check scalar < N and > 0 */
-    for(int i=FE_L-1;i>=0;i--){
-        if(scalar[i]>d_N[i]) return 0;
-        if(scalar[i]<d_N[i]) break;
+    for(int i=3;i>=0;i--){
+        if(scalar[i]> ((i==3)?D_N3:(i==2)?D_N2:(i==1)?D_N1:D_N0)) return 0;
+        if(scalar[i]< ((i==3)?D_N3:(i==2)?D_N2:(i==1)?D_N1:D_N0)) break;
     }
     if((scalar[0]|scalar[1]|scalar[2]|scalar[3])==0) return 0;
 
-    /* Q = scalar * G */
     d_jac Q;
     jac_mul_g(&Q, scalar);
 
-    /* Get affine: x = X/Z², y = Y/Z³ */
     d_fe zi,zi2,zi3,xa,ya;
     fe_inv(&zi,&Q.z);
     fe_sqr(&zi2,&zi);
@@ -337,10 +362,8 @@ __device__ static int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
     fe_mul(&xa,&Q.x,&zi2);
     fe_mul(&ya,&Q.y,&zi3);
 
-    /* Compressed: 02 if y even, 03 if y odd */
     uint8_t pub[33];
     pub[0] = (ya.d[0] & 1) ? 0x03 : 0x02;
-    /* Write x big-endian (from LE limbs) */
     for(int i=0;i<4;i++){
         pub[1+(3-i)*8+0] = (uint8_t)(xa.d[i]>>56);
         pub[1+(3-i)*8+1] = (uint8_t)(xa.d[i]>>48);
@@ -352,7 +375,6 @@ __device__ static int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
         pub[1+(3-i)*8+7] = (uint8_t)(xa.d[i]);
     }
 
-    /* hash160 = RIPEMD160(SHA256(pubkey)) */
     uint8_t sha[32];
     d_sha256(pub, 33, sha);
     d_ripemd160(sha, 32, h160);
