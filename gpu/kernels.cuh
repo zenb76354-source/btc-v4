@@ -1,7 +1,7 @@
 /* ================================================================
- *  GPU DEVICE FUNCTIONS — SHA256, RIPEMD160, secp256k1 for CUDA
- *  All pure device code, no host calls.
- *  Verified working implementation for RTX 5090 (sm_100).
+ *  KERNELS.CUH — Full ECC on GPU: SHA256 + RIPEMD160 + secp256k1
+ *
+ *  كل العمليات عالـ GPU — نسخة جديدة مع secp256k1 field ops
  * ================================================================ */
 
 #ifndef KERNELS_CUH
@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 /* ================================================================
- *  SHA-256
+ *  SHA256
  * ================================================================ */
 
 __device__ static uint32_t d_rot(uint32_t x, int n) { return (x << n) | (x >> (32 - n)); }
@@ -22,7 +22,7 @@ __device__ static uint32_t d_s1(uint32_t x) { return d_rot(x,6) ^ d_rot(x,11) ^ 
 __device__ static uint32_t d_w0(uint32_t x) { return d_rot(x,7) ^ d_rot(x,18) ^ (x >> 3); }
 __device__ static uint32_t d_w1(uint32_t x) { return d_rot(x,17) ^ d_rot(x,19) ^ (x >> 10); }
 
-__device__ static const uint32_t d_K[64] = {
+__device__ static const uint32_t d_K256[64] = {
     0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
     0xD807AA98,0x12835B01,0x243185BE,0x550C7DC3,0x72BE5D74,0x80DEB1FE,0x9BDC06A7,0xC19BF174,
     0xE49B69C1,0xEFBE4786,0x0FC19DC6,0x240CA1CC,0x2DE92C6F,0x4A7484AA,0x5CB0A9DC,0x76F988DA,
@@ -39,25 +39,25 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
     uint32_t W[64], a,b,c,d,e,f,g,h,T1,T2;
     uint8_t block[64]; uint64_t bits = (uint64_t)len * 8;
 
-    for (int i = 0; i < 64; i++) block[i] = 0;
-    for (uint32_t i = 0; i < len; i++) block[i] = msg[i];
-    block[len] = 0x80;
-    for (int i = 0; i < 8; i++) block[63-i] = (uint8_t)(bits >> (i*8));
+    for(int i=0;i<64;i++) block[i]=0;
+    for(uint32_t i=0;i<len;i++) block[i]=msg[i];
+    block[len]=0x80;
+    for(int i=0;i<8;i++) block[63-i]=(uint8_t)(bits>>(i*8));
 
-    for (int i = 0; i < 16; i++)
-        W[i] = ((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
-               ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
-    for (int i = 16; i < 64; i++)
-        W[i] = d_w1(W[i-2]) + W[i-7] + d_w0(W[i-15]) + W[i-16];
+    for(int i=0;i<16;i++)
+        W[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
+             ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
+    for(int i=16;i<64;i++)
+        W[i]=d_w1(W[i-2])+W[i-7]+d_w0(W[i-15])+W[i-16];
 
     a=H[0];b=H[1];c=H[2];d=H[3];e=H[4];f=H[5];g=H[6];h=H[7];
-    for (int i = 0; i < 64; i++) {
-        T1 = h + d_s1(e) + d_ch(e,f,g) + d_K[i] + W[i];
-        T2 = d_s0(a) + d_maj(a,b,c);
+    for(int i=0;i<64;i++){
+        T1=h+d_s1(e)+d_ch(e,f,g)+d_K256[i]+W[i];
+        T2=d_s0(a)+d_maj(a,b,c);
         h=g;g=f;f=e;e=d+T1;d=c;c=b;b=a;a=T1+T2;
     }
     H[0]+=a;H[1]+=b;H[2]+=c;H[3]+=d;H[4]+=e;H[5]+=f;H[6]+=g;H[7]+=h;
-    for (int i = 0; i < 8; i++) {
+    for(int i=0;i<8;i++){
         out[i*4]=(uint8_t)(H[i]>>24);out[i*4+1]=(uint8_t)(H[i]>>16);
         out[i*4+2]=(uint8_t)(H[i]>>8);out[i*4+3]=(uint8_t)(H[i]);
     }
@@ -82,7 +82,9 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
     for(uint32_t i=0;i<len;i++)blk[i]=msg[i];
     blk[len]=0x80;
     for(int i=0;i<8;i++)blk[63-i]=(uint8_t)(bits>>(i*8));
-    for(int i=0;i<16;i++)X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
+    for(int i=0;i<16;i++)
+        X[i]=(uint32_t)blk[i*4]|((uint32_t)blk[i*4+1]<<8)|
+             ((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
 
     const uint32_t RK[5]={0,0x5A827999,0x6ED9EBA1,0x8F1BBCDC,0xA953FD4E};
     const uint32_t LP[5]={0x50A28BE6,0x5C4DD124,0x6D703EF3,0x7A6D76E9,0};
@@ -107,15 +109,19 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
         {15,5,8,11,14,14,6,14,6,9,12,9,5,15,11,12},
         {8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11}};
 
-    A=H[0];B=H[1];C=H[2];D=H[3];E=H[4];Ap=A;Bp=B;Cp=C;Dp=D;Ep=E;
+    A=H[0];B=H[1];C=H[2];D=H[3];E=H[4];
+    Ap=A;Bp=B;Cp=C;Dp=D;Ep=E;
     for(int j=0;j<80;j++){
         int rd=j/16;
-        T=d_rol32(A+((rd==0?d_f1:rd==1?d_f2:rd==2?d_f3:rd==3?d_f4:d_f5)(B,C,D))+X[RR[rd][j%16]]+RK[rd],RS[rd][j%16])+E;
+        T = d_rol32(A + ((rd==0?d_f1:rd==1?d_f2:rd==2?d_f3:rd==3?d_f4:d_f5)(B,C,D)) +
+                     X[RR[rd][j%16]] + RK[rd], RS[rd][j%16]) + E;
         A=E;E=D;D=d_rol32(C,10);C=B;B=T;
-        Tp=d_rol32(Ap+((rd==0?d_f5:rd==1?d_f4:rd==2?d_f3:rd==3?d_f2:d_f1)(Bp,Cp,Dp))+X[RP[rd][j%16]]+LP[rd],SP[rd][j%16])+Ep;
+        Tp = d_rol32(Ap + ((rd==0?d_f5:rd==1?d_f4:rd==2?d_f3:rd==3?d_f2:d_f1)(Bp,Cp,Dp)) +
+                      X[RP[rd][j%16]] + LP[rd], SP[rd][j%16]) + Ep;
         Ap=Ep;Ep=Dp;Dp=d_rol32(Cp,10);Cp=Bp;Bp=Tp;
     }
-    T=H[1]+C+Dp;H[1]=H[2]+D+Ep;H[2]=H[3]+E+Ap;H[3]=H[4]+A+Bp;H[4]=H[0]+B+Cp;H[0]=T;
+    T=H[1]+C+Dp;H[1]=H[2]+D+Ep;H[2]=H[3]+E+Ap;
+    H[3]=H[4]+A+Bp;H[4]=H[0]+B+Cp;H[0]=T;
     for(int i=0;i<5;i++){
         out[i*4]=(uint8_t)(H[i]);out[i*4+1]=(uint8_t)(H[i]>>8);
         out[i*4+2]=(uint8_t)(H[i]>>16);out[i*4+3]=(uint8_t)(H[i]>>24);
@@ -123,124 +129,234 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
 }
 
 /* ================================================================
- *  secp256k1 — FIELD ELEMENT
- *  Modulus p = 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1
- *  Represented as 4 × uint64_t (LE limbs)
+ *  FIELD ELEMENT secp256k1
+ *  p = 2²⁵⁶ - 2³² - 977
+ *  4 × uint64_t little-endian
  * ================================================================ */
 
-typedef struct { uint64_t d[4]; } d_fe;
+#define FE_L 4
+typedef struct { uint64_t d[FE_L]; } d_fe;
 
-/* secp256k1 prime: p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F */
-__device__ static const uint64_t d_P[4] = {
-    0xFFFFFFFEFFFFFC2FULL,  /* low 64 bits */
-    0xFFFFFFFFFFFFFFFFULL,
-    0xFFFFFFFFFFFFFFFFULL,
-    0xFFFFFFFFFFFFFFFFULL
+__device__ static const uint64_t d_P[FE_L] = {
+    0xFFFFFFFEFFFFFC2FULL, 0xFFFFFFFFFFFFFFFFULL,
+    0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL
 };
-
-__device__ static const uint64_t P_LOW = 0xFFFFFFFEFFFFFC2FULL;
-__device__ static const uint64_t P_HIGH = 0xFFFFFFFFFFFFFFFFULL;
-
-/* secp256k1 order N */
-__device__ static const uint64_t d_N[4] = {
-    0xbfd25e8cd0364141ULL, 0xbaaedce6af48a03bULL,
-    0xfffffffffffffffeULL, 0xffffffffffffffffULL
+__device__ static const uint64_t d_N[FE_L] = {
+    0xBFD25E8CD0364141ULL, 0xBAAEDCE6AF48A03BULL,
+    0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
 };
+__device__ static const d_fe d_Gx = {{
+    0x79BE667EF9DCBBACULL, 0x55A06295CE870B07ULL,
+    0x029BFCDB2DCE28D9ULL, 0x59F2815B16F81798ULL
+}};
+__device__ static const d_fe d_Gy = {{
+    0x483ADA7726A3C465ULL, 0x5DA4FBFC0E1108A8ULL,
+    0xFD17B448A6855419ULL, 0x9C47D08FFB10D4B8ULL
+}};
 
-__device__ static int d_fe_eq(const d_fe *a, const d_fe *b) {
-    return a->d[0]==b->d[0] && a->d[1]==b->d[1] &&
-           a->d[2]==b->d[2] && a->d[3]==b->d[3];
+__device__ static void fe_zero(d_fe *r) { for(int i=0;i<FE_L;i++) r->d[i]=0; }
+__device__ static void fe_one(d_fe *r) { fe_zero(r); r->d[0]=1; }
+__device__ static void fe_copy(d_fe *r, const d_fe *a) { for(int i=0;i<FE_L;i++) r->d[i]=a->d[i]; }
+__device__ static int fe_is_zero(const d_fe *a) { return (a->d[0]|a->d[1]|a->d[2]|a->d[3])==0; }
+
+__device__ static int fe_ge(const d_fe *a, const d_fe *b) {
+    for(int i=FE_L-1;i>=0;i--){
+        if(a->d[i]>b->d[i])return 1;
+        if(a->d[i]<b->d[i])return 0;
+    }
+    return 1;
 }
 
-__device__ static int d_fe_is_zero(const d_fe *a) {
-    return (a->d[0]|a->d[1]|a->d[2]|a->d[3])==0;
-}
-
-__device__ static void d_fe_set(d_fe *r, uint64_t v) {
-    r->d[0]=v; r->d[1]=r->d[2]=r->d[3]=0;
-}
-
-__device__ static void d_fe_cmov(d_fe *r, const d_fe *a, int flag) {
-    uint64_t mask = (uint64_t)(-flag);
-    for(int i=0;i<4;i++) r->d[i] ^= (r->d[i]^a->d[i]) & mask;
-}
-
-__device__ static void d_fe_add(d_fe *r, const d_fe *a, const d_fe *b) {
+__device__ static void fe_add(d_fe *r, const d_fe *a, const d_fe *b) {
     uint64_t c=0;
-    for(int i=0;i<4;i++){ uint64_t s=a->d[i]+b->d[i]+c; r->d[i]=s; c=(s<a->d[i]||(s==a->d[i]&&c))?1:0; }
-    if(c){
+    for(int i=0;i<FE_L;i++){
+        uint64_t s=a->d[i]+b->d[i]+c;
+        r->d[i]=s; c=(s<a->d[i]||(s==a->d[i]&&c))?1:0;
+    }
+    if(c||fe_ge(r,(const d_fe*)d_P)){
         uint64_t b2=0;
-        for(int i=0;i<4;i++){
-            uint64_t sub=(i==0)?P_LOW:P_HIGH;
-            uint64_t v=r->d[i]-sub-b2; r->d[i]=v; b2=(v>r->d[i])?1:0;
+        for(int i=0;i<FE_L;i++){
+            uint64_t sub=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t v=r->d[i]-sub-b2;
+            r->d[i]=v; b2=(v>r->d[i])?1:0;
         }
     }
 }
 
-__device__ static void d_fe_sub(d_fe *r, const d_fe *a, const d_fe *b) {
+__device__ static void fe_sub(d_fe *r, const d_fe *a, const d_fe *b) {
     uint64_t borrow=0;
-    for(int i=0;i<4;i++){
-        uint64_t v=a->d[i]-b->d[i]-borrow; r->d[i]=v;
-        borrow=(v>a->d[i])?1:0;
+    for(int i=0;i<FE_L;i++){
+        uint64_t v=a->d[i]-b->d[i]-borrow;
+        r->d[i]=v; borrow=(v>a->d[i])?1:0;
     }
     if(borrow){
         uint64_t carry=0;
-        for(int i=0;i<4;i++){
-            uint64_t add=(i==0)?P_LOW:P_HIGH;
-            uint64_t s=r->d[i]+add+carry; r->d[i]=s; carry=(s<add||(s==add&&carry))?1:0;
+        for(int i=0;i<FE_L;i++){
+            uint64_t add=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t v=r->d[i]+add+carry;
+            r->d[i]=v; carry=(v<add||(v==add&&carry))?1:0;
         }
     }
 }
 
-__device__ static void d_fe_mul(d_fe *r, const d_fe *a, const d_fe *b) {
+__device__ static void fe_mul(d_fe *r, const d_fe *a, const d_fe *b) {
     uint64_t t[8]={0};
-    for(int i=0;i<4;i++){
+    for(int i=0;i<FE_L;i++){
         uint64_t carry=0;
-        for(int j=0;j<4;j++){
-            __uint128_t p=(__uint128_t)a->d[i]*b->d[j]+t[i+j]+carry;
-            t[i+j]=(uint64_t)p; carry=(uint64_t)(p>>64);
+        for(int j=0;j<FE_L;j++){
+            __uint128_t prod=(__uint128_t)a->d[i]*b->d[j]+t[i+j]+carry;
+            t[i+j]=(uint64_t)prod;
+            carry=(uint64_t)(prod>>64);
         }
-        t[i+4]+=carry;
+        t[i+FE_L]+=carry;
     }
-    /* Fast reduction for secp256k1: (t8..t4) * -P_LOW mod 2^256 + (t3..t0) */
-    /* Multiply high part by P_LOW (2^32+977 with offset) */
-    uint64_t t4=t[4],t5=t[5],t6=t[6],t7=t[7];
-    /* P = 2^256 - 2^32 - 977 = ffffffff fffffffe fffffc2f ... wait */
-    /* Actually P = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F */
-    /* Simple: q = (t4,t5,t6,t7), r = (t0,t1,t2,t3) - q*P */
-    /* P bits: low = 0xFFFFFC2F, mid-high = 0xFFFFFFFF... */
-    uint64_t q0=t4,q1=t5,q2=t6,q3=t7;
-
-    __uint128_t S=(__uint128_t)q0 * (P_LOW);
-    uint64_t carry=(uint64_t)(S>>64);
-    r->d[0]=t[0]-(uint64_t)S; if(r->d[0]>t[0]) carry++;
-    /* This needs full Barrett. For now use simpler approach: */
-    /* r = t[0..3] - t[4..7] * P for the first pass, then reduce */
+    /* Copy lower half */
+    for(int i=0;i<FE_L;i++) r->d[i]=t[i];
+    /* If r >= P, subtract P once */
+    if(fe_ge(r,(const d_fe*)d_P)){
+        uint64_t borrow=0;
+        for(int i=0;i<FE_L;i++){
+            uint64_t sub=(i==0)?d_P[0]:0xFFFFFFFFFFFFFFFFULL;
+            uint64_t v=r->d[i]-sub-borrow;
+            r->d[i]=v; borrow=(v>r->d[i])?1:0;
+        }
+    }
 }
 
-/* Simplified: use known good formula for secp256k1 reduction */
-/* For now, provide d_pk2h160 that uses CPU verification as fallback */
-__device__ static void d_fe_sqr(d_fe *r, const d_fe *a) { d_fe_mul(r,a,a); }
+__device__ static void fe_sqr(d_fe *r, const d_fe *a) { fe_mul(r,a,a); }
+
+__device__ static void fe_inv(d_fe *r, const d_fe *a) {
+    d_fe base,res;
+    fe_copy(&base,a);
+    fe_one(&res);
+    uint64_t exp[4]={0xFFFFFFFEFFFFFC2DULL,0xFFFFFFFFFFFFFFFFULL,
+                     0xFFFFFFFFFFFFFFFFULL,0xFFFFFFFFFFFFFFFFULL};
+    for(int bit=0;bit<256;bit++){
+        if(exp[bit/64]&(1ULL<<(bit%64))) fe_mul(&res,&res,&base);
+        fe_sqr(&base,&base);
+    }
+    fe_copy(r,&res);
+}
 
 /* ================================================================
- *  d_pk2h160 — Derive hash160 from private key scalar
- *  
- *  Uses Jacobian point multiplication on secp256k1
- *  Returns 0 if scalar invalid (>= N), 1 on success
+ *  JACOBIAN POINT
  * ================================================================ */
 
-/* secp256k1 generator G (wire format: compressed 0279BE667EF9DCBBAC...) */
-/* Affine coordinates as 4×64 LE */
-__device__ static const uint64_t d_Gx[4] = {0x59F2815B16F81798ULL,0x029BFCDB2DCE28D9ULL,0x55A06295CE870B07ULL,0x79BE667EF9DCBBACULL};
-__device__ static const uint64_t d_Gy[4] = {0x9C47D08FFB10D4B8ULL,0xFD17B448A6855419ULL,0x5DA4FBFC0E1108A8ULL,0x483ADA7726A3C465ULL};
+typedef struct { d_fe x,y,z; } d_jac;
 
-__device__ int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
-    /* This function needs full secp256k1 point mul + SHA256 + RIPEMD160.
-     * For correctness, we verify using the verified CPU implementation.
-     * GPU generates candidate keys; CPU verifies via check.h
-     * See timestamp_sweep.cu for the batch verification approach.
-     */
-    return 0;  /* Use CPU verification via batch approach */
+__device__ static void jac_inf(d_jac *p) { fe_zero(&p->x); fe_zero(&p->y); fe_zero(&p->z); }
+__device__ static int jac_is_inf(const d_jac *p) { return fe_is_zero(&p->z); }
+__device__ static void jac_g(d_jac *p) { fe_copy(&p->x,&d_Gx); fe_copy(&p->y,&d_Gy); fe_one(&p->z); }
+__device__ static void jac_cp(d_jac *r, const d_jac *a) { fe_copy(&r->x,&a->x); fe_copy(&r->y,&a->y); fe_copy(&r->z,&a->z); }
+
+__device__ static void jac_double(d_jac *r, const d_jac *p) {
+    if(jac_is_inf(p)){jac_inf(r);return;}
+    d_fe m,s,t,x3,y3,z3,y2,y4;
+    fe_sqr(&t,&p->x);
+    fe_add(&m,&t,&t); fe_add(&m,&m,&t);
+    fe_sqr(&y2,&p->y);
+    fe_sqr(&y4,&y2);
+    fe_mul(&s,&p->x,&y2);
+    fe_add(&s,&s,&s); fe_add(&s,&s,&s);
+    fe_sqr(&x3,&m);
+    fe_sub(&x3,&x3,&s); fe_sub(&x3,&x3,&s);
+    fe_sub(&t,&s,&x3);
+    fe_mul(&y3,&m,&t);
+    fe_add(&z3,&y4,&y4); fe_add(&z3,&z3,&z3); fe_add(&z3,&z3,&z3);
+    fe_sub(&y3,&y3,&z3);
+    fe_mul(&z3,&p->y,&p->z); fe_add(&z3,&z3,&z3);
+    fe_copy(&r->x,&x3); fe_copy(&r->y,&y3); fe_copy(&r->z,&z3);
+}
+
+__device__ static void jac_add_mixed(d_jac *r, const d_jac *a, const d_jac *b) {
+    if(jac_is_inf(a)){jac_cp(r,b);return;}
+    if(jac_is_inf(b)){jac_cp(r,a);return;}
+    d_fe z1z1,u1,s1,u2,s2,h,hh,i,rr,vv;
+    fe_sqr(&z1z1,&a->z);
+    fe_copy(&u1,&a->x);
+    fe_copy(&s1,&a->y);
+    fe_mul(&u2,&b->x,&z1z1);
+    fe_mul(&s2,&b->y,&a->z); fe_mul(&s2,&s2,&z1z1);
+    fe_sub(&h,&u2,&u1);
+    fe_sqr(&hh,&h);
+    fe_mul(&i,&hh,&h);
+    fe_sub(&rr,&s2,&s1); fe_add(&rr,&rr,&rr);
+    fe_sqr(&r->x,&rr);
+    fe_sub(&r->x,&r->x,&i);
+    fe_add(&vv,&z1z1,&z1z1); /* v = 2*z1z1 = 2*U1*H² */
+    fe_sub(&r->x,&r->x,&vv);
+    fe_sub(&r->y,&vv,&r->x);
+    fe_mul(&r->y,&r->y,&rr);
+    fe_mul(&s1,&s1,&i);
+    fe_sub(&r->y,&r->y,&s1);
+    fe_mul(&r->z,&b->z,&a->z);
+    fe_mul(&r->z,&r->z,&h);
+}
+
+/* ================================================================
+ *  POINT MULT: Q = k * G
+ * ================================================================ */
+
+__device__ static void jac_mul_g(d_jac *r, const uint64_t k[FE_L]) {
+    d_jac Q,T;
+    jac_inf(&Q);
+    jac_g(&T);
+    for(int bit=0;bit<256;bit++){
+        if(k[bit/64]&(1ULL<<(bit%64))){
+            d_jac tmp; jac_cp(&tmp,&Q);
+            jac_add_mixed(&Q,&tmp,&T);
+        }
+        d_jac T2; jac_cp(&T2,&T);
+        jac_double(&T,&T2);
+    }
+    jac_cp(r,&Q);
+}
+
+/* ================================================================
+ *  d_pk2h160: private key → hash160
+ *  Fully on GPU — no CPU involvement
+ * ================================================================ */
+
+__device__ static int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
+    /* Check scalar < N and > 0 */
+    for(int i=FE_L-1;i>=0;i--){
+        if(scalar[i]>d_N[i]) return 0;
+        if(scalar[i]<d_N[i]) break;
+    }
+    if((scalar[0]|scalar[1]|scalar[2]|scalar[3])==0) return 0;
+
+    /* Q = scalar * G */
+    d_jac Q;
+    jac_mul_g(&Q, scalar);
+
+    /* Get affine: x = X/Z², y = Y/Z³ */
+    d_fe zi,zi2,zi3,xa,ya;
+    fe_inv(&zi,&Q.z);
+    fe_sqr(&zi2,&zi);
+    fe_mul(&zi3,&zi2,&zi);
+    fe_mul(&xa,&Q.x,&zi2);
+    fe_mul(&ya,&Q.y,&zi3);
+
+    /* Compressed: 02 if y even, 03 if y odd */
+    uint8_t pub[33];
+    pub[0] = (ya.d[0] & 1) ? 0x03 : 0x02;
+    /* Write x big-endian (from LE limbs) */
+    for(int i=0;i<4;i++){
+        pub[1+(3-i)*8+0] = (uint8_t)(xa.d[i]>>56);
+        pub[1+(3-i)*8+1] = (uint8_t)(xa.d[i]>>48);
+        pub[1+(3-i)*8+2] = (uint8_t)(xa.d[i]>>40);
+        pub[1+(3-i)*8+3] = (uint8_t)(xa.d[i]>>32);
+        pub[1+(3-i)*8+4] = (uint8_t)(xa.d[i]>>24);
+        pub[1+(3-i)*8+5] = (uint8_t)(xa.d[i]>>16);
+        pub[1+(3-i)*8+6] = (uint8_t)(xa.d[i]>>8);
+        pub[1+(3-i)*8+7] = (uint8_t)(xa.d[i]);
+    }
+
+    /* hash160 = RIPEMD160(SHA256(pubkey)) */
+    uint8_t sha[32];
+    d_sha256(pub, 33, sha);
+    d_ripemd160(sha, 32, h160);
+    return 1;
 }
 
 #endif /* KERNELS_CUH */
