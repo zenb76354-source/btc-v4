@@ -119,9 +119,11 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
         for(int i=0;i<64;i++)blk[i]=0;
         uint32_t poff=b*64;
         for(uint32_t i=0;i<64&&(poff+i)<len;i++) blk[i]=msg[poff+i];
-        if(poff+64>len){
-            blk[len-poff]=0x80;
-            if(poff+56<=len) for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
+        if(poff+64>=len) {  /* last block (or block containing the end of message) */
+            int rem = len<b*64+64 ? len%(uint32_t)64 : 64;
+            if(rem==64) rem=0;  /* full block case */
+            blk[rem]=0x80;
+            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
         }
         uint32_t X[16];
         for(int i=0;i<16;i++) X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
