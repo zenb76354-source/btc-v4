@@ -197,3 +197,55 @@ __global__ void k51(void*f,void*fk){
         pos+=sl+1;
     }
 }
+
+/* ================================================================
+ *  SANITY KERNEL: يبحث عن مفتاح معروف privkey = 1
+ *  الهدف: التحقق من صحة الخوارزميات (SHA256+RIPEMD160+ECC point mult)
+ *  address الصحيح: 1EHNa6b34hmqoEgmcer8Kyo3Vs7NPre6MG
+ * ================================================================ */
+__global__ void k_sanity(void*f,void*fk){
+    if(threadIdx.x||blockIdx.x)return;
+    /* مفتاح خاص = 1 (0x000...001) */
+    uint8_t pk[32];
+    for(int i=0;i<32;i++) pk[i]=0;
+    pk[31]=1;  /* Big-endian: آخر بايت = 1 */
+    check_return(pk,f,fk);
+}
+
+/* H52: كل target address كـ string بالكامل */
+__global__ void k52(void*f,void*fk){
+    if(threadIdx.x||blockIdx.x)return;
+    const char*addrs[8]={
+        "12rMpw5HnEvAw3nQqLmRBCQyuktfpa4eVw",
+        "1HLvaTs3zR3oev9ya7Pzp3GB9Gqfg6XYJT",
+        "1JA4MpuV8MMNYCDTFHdCQeXGyem7mqo4B4",
+        "13GvAdkFeHFGVxTHzcA2rD2e5BD4cGkbBH",
+        "1DTy9z4JvtqYsg44oagVpHqyQpF7ZLLs45",
+        "1MVLP2kRPNqz8VJUy83LstUoMQzUjgq4Zg",
+        "15QezNwA5ThiPf7wo89TTnfBwny93VQFTp",
+        "198aMn6ZYAczwrE5NvNTUMyJ5qkfy4g3Hi"
+    };
+    uint8_t p[32];
+    for(int i=0;i<8;i++){
+        if(*(int*)f)return;
+        int sl=n_strlen(addrs[i]);
+        d_sha256((const uint8_t*)addrs[i],sl,p);check_return(p,f,fk);
+        
+        /* Double SHA256 of address */
+        uint8_t h[32];
+        d_sha256((const uint8_t*)addrs[i],sl,h);
+        d_sha256(h,32,h);check_return(h,f,fk);
+        
+        /* SHA256 of hash160 */
+        d_sha256(d_targets+i*20,20,p);check_return(p,f,fk);
+        
+        /* Double SHA256 hash160 */
+        d_sha256(d_targets+i*20,20,h);
+        d_sha256(h,32,h);check_return(h,f,fk);
+        
+        /* reverse address */
+        char rev[64];
+        for(int j=0;j<sl;j++) rev[j]=addrs[i][sl-1-j]; rev[sl]=0;
+        d_sha256((const uint8_t*)rev,sl,p);check_return(p,f,fk);
+    }
+}

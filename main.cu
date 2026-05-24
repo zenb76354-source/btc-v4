@@ -26,6 +26,11 @@
 /* ---------- H28: PID range كامل ---------- */
 #define H28_TOTAL   2000000000ULL      /* 0 → 2 مليار (Linux PID + pseudo-random) */
 
+/* ---------- SANITY CHECK: private key معروف ---------- */
+/* مفتاح private معروف للاختبار: الـ key لـ 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa (Satoshi) */
+/* لا نبحث عنها، فقط نتحقق إن الـ GPU يطابقها صح */
+/* نضيف target وهمي في الـ TARGET_H160 مؤقتََا */
+
 /* ---------- H48: أعداد صحيحة ---------- */
 #define H48_TOTAL   10000000000ULL     /* 10 مليار فقط (بدل 281 تريليون — غير عملي) */
 
@@ -247,6 +252,43 @@ int main() {
     };
     cudaMemcpyToSymbol(d_targets,ht,8*20);
 
+    /* ===== SANITY CHECK: التحقق من صحة crypto على GPU ===== */
+    /* نضيف target وهمي: hash160 للـ address اللي ينتج من privkey=0x0000...0001
+       هذا المفتاح ينتج address: 1EHNa6b34hmqoEgmcer8Kyo3Vs7NPre6MG
+       hash160: ecdd3099373e476a2e7a5e56e5da2ac3750cdcbc */
+    {
+        uint8_t mod[8*20];
+        memcpy(mod,ht,8*20);
+        /* نضيف hash160 معروف لاختبار الخوارزميات على GPU */
+        const uint8_t known_h160[20] = {0xec,0xdd,0x30,0x99,0x37,0x3e,0x47,0x6a,0x2e,0x7a,0x5e,0x56,0xe5,0xda,0x2a,0xc3,0x75,0x0c,0xdc,0xbc};
+        memcpy(mod+7*20,known_h160,20);  /* نبدل E1 */
+        cudaMemcpyToSymbol(d_targets,mod,8*20);
+        
+        int *df; uint64_t *dfk;
+        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
+        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
+        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
+        printf("\n===== SANITY CHECK =====\n");
+        printf("Testing: privkey=1 -> 1EHNa6b34hmqoEgmcer8Kyo3Vs7NPre6MG\n");
+        /* kernel خاص يختبر privkey=1 مباشرة */
+        k_sanity<<<1,1>>>(df,dfk);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
+        if(hf){
+            uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+            printf("\n*** SANITY CHECK: KEY FOUND! *** key: ");
+            for(int i=0;i<4;i++) printf("%016llx",(unsigned long long)hfk[i]);
+            printf("\n>>> CRYPTO ON GPU IS CORRECT <<<\n");
+        } else {
+            printf("\n*** SANITY FAILED! privkey=1 NOT matched ***\n");
+            printf(">>> GPU crypto may have bugs! <<<\n");
+        }
+        cudaFree(df); cudaFree(dfk);
+        
+        /* استرجاع الـ targets الأصلية */
+        cudaMemcpyToSymbol(d_targets,ht,8*20);
+    }
+
     int have_ph = load_phrases();
 
     /* ===== PHASE 0: قاموس صغير (لم يتغير) ===== */
@@ -383,6 +425,23 @@ int main() {
         "16 March 2010","15 July 2010","17 July 2010","10 Sep 2010","16 Sep 2010",
         "March 16 2010","July 15 2010","July 17 2010","Sep 10 2010","Sep 16 2010",NULL};
     if(run_dict("H40",h40w,0)) return 0;
+    
+    /* H52: SHA256 of address, dSHA256 address, SHA256 hash160, etc */
+    printf("\n===== PHASE 0b: ADDRESS/KEY HASHES =====\n");
+    {
+        int *df; uint64_t *dfk;
+        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
+        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
+        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
+        printf("[H52] Address/key hashes...\n");
+        k52<<<1,1>>>(df,dfk);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
+        if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+            found("H52",hfk,0); cudaFree(df); cudaFree(dfk); return 0;}
+        printf("[H52] Done.\n");
+        cudaFree(df); cudaFree(dfk);
+    }
 
     /* ===== PHASE 1: MEDIUM (2M keys أو أقل لكل kernel) ===== */
     printf("\n===== PHASE 1: MEDIUM SEQUENTIAL =====\n");
@@ -442,23 +501,6 @@ int main() {
     /* ===== PHASE 5b: INTEGER RANGE 0 → 1B (with 8-byte LE) ===== */
     printf("\n===== PHASE 5b: INTEGER SWEEP LE (0 to 1B) =====\n");
     if(run_seq("H48",28,1000000000ULL,50000000)) return 0;
-
-    /* ===== PHASE 6: ADDRESS/KEY DERIVED ===== */
-    printf("\n===== PHASE 6: ADDRESS/KEY HASHES =====\n");
-    {
-        int *df; uint64_t *dfk;
-        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
-        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
-        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
-        printf("[H50] Address/key based keys...\n");
-        k50<<<1,1>>>(df,dfk);
-        cudaDeviceSynchronize();
-        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
-        if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
-            found("H50",hfk,0); cudaFree(df); cudaFree(dfk); return 0;}
-        printf("[H50] Done.\n");
-        cudaFree(df); cudaFree(dfk);
-    }
 
     /* ===== PHASE 7: REVERSE DICT ===== */
     printf("\n===== PHASE 7: REVERSE DICT =====\n");
