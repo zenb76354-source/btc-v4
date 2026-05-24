@@ -70,7 +70,7 @@ int h36_timestamp_ms_sweep(void) {
     secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
 
     const int THREADS = 256;
-    const uint64_t KEYS_PER_BATCH = 50000000ULL;   /* 50M keys per batch → ~1.6GB max */
+    const uint64_t KEYS_PER_BATCH = 500000000ULL;  /* 500M keys per batch → ~16GB max */
     uint8_t *gpu_keys;
     cudaMalloc(&gpu_keys, KEYS_PER_BATCH * 32);
 
