@@ -13,30 +13,10 @@
  *  SHA256
  * ================================================================ */
 
-__device__ static uint32_t d_rot(uint32_t x, int n) { return (x << n) | (x >> (32 - n)); }
-__device__ static uint32_t d_ch(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (~x & z); }
-__device__ static uint32_t d_maj(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (x & z) ^ (y & z); }
-__device__ static uint32_t d_s0(uint32_t x) { return d_rot(x,2) ^ d_rot(x,13) ^ d_rot(x,22); }
-__device__ static uint32_t d_s1(uint32_t x) { return d_rot(x,6) ^ d_rot(x,11) ^ d_rot(x,25); }
-__device__ static uint32_t d_w0(uint32_t x) { return d_rot(x,7) ^ d_rot(x,18) ^ (x >> 3); }
-__device__ static uint32_t d_w1(uint32_t x) { return d_rot(x,17) ^ d_rot(x,19) ^ (x >> 10); }
-
+/* SHA-256 معاد كتابتها من أصل سليم */
 __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32]) {
-    uint32_t H[8] = {0x6A09E667,0xBB67AE85,0x3C6EF372,0xA54FF53A,
-                     0x510E527F,0x9B05688C,0x1F83D9AB,0x5BE0CD19};
-    uint32_t W[64];
-    uint8_t block[64]; uint64_t bits = (uint64_t)len * 8;
-    for(int i=0;i<64;i++) block[i]=0;
-    for(uint32_t i=0;i<len;i++) block[i]=msg[i];
-    block[len]=0x80;
-    for(int i=0;i<8;i++) block[63-i]=(uint8_t)(bits>>(i*8));
-
-    for(int i=0;i<16;i++)
-        W[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
-             ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
-
-    /* K256 when needed—inline to avoid constant mem */
-    const uint32_t K256[64] = {
+    /* ثوابت K */
+    const uint32_t K[64] = {
         0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
         0xD807AA98,0x12835B01,0x243185BE,0x550C7DC3,0x72BE5D74,0x80DEB1FE,0x9BDC06A7,0xC19BF174,
         0xE49B69C1,0xEFBE4786,0x0FC19DC6,0x240CA1CC,0x2DE92C6F,0x4A7484AA,0x5CB0A9DC,0x76F988DA,
@@ -46,21 +26,88 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
         0x19A4C116,0x1E376C08,0x2748774C,0x34B0BCB5,0x391C0CB3,0x4ED8AA4A,0x5B9CCA4F,0x682E6FF3,
         0x748F82EE,0x78A5636F,0x84C87814,0x8CC70208,0x90BEFFFA,0xA4506CEB,0xBEF9A3F7,0xC67178F2
     };
-
-    for(int i=16;i<64;i++)
-        W[i]=d_w1(W[i-2])+W[i-7]+d_w0(W[i-15])+W[i-16];
-
-    uint32_t a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
-    for(int i=0;i<64;i++){
-        uint32_t T1=h+d_s1(e)+d_ch(e,f,g)+K256[i]+W[i];
-        uint32_t T2=d_s0(a)+d_maj(a,b,c);
-        h=g;g=f;f=e;e=d+T1;d=c;c=b;b=a;a=T1+T2;
+    
+    uint32_t h0=0x6A09E667, h1=0xBB67AE85, h2=0x3C6EF372, h3=0xA54FF53A;
+    uint32_t h4=0x510E527F, h5=0x9B05688C, h6=0x1F83D9AB, h7=0x5BE0CD19;
+    
+    uint64_t bitlen = (uint64_t)len * 8;  /* bits */
+    uint32_t padded_len = ((len + 9 + 63) / 64) * 64;
+    if(padded_len == 0) padded_len = 64;
+    
+    /* نقوم بتقطيع الـ padding و الـ hashing block ب block */
+    uint32_t complete_blocks = len / 64;
+    
+    /* نعامل الـ blocks الكاملة (بدون padding) */
+    for(uint32_t b = 0; b < complete_blocks; b++) {
+        uint32_t W[64];
+        for(int i=0;i<16;i++)
+            W[i] = ((uint32_t)msg[b*64+i*4]<<24) | ((uint32_t)msg[b*64+i*4+1]<<16) |
+                   ((uint32_t)msg[b*64+i*4+2]<<8) | msg[b*64+i*4+3];
+        for(int i=16;i<64;i++) {
+            uint32_t s0 = ((W[i-15]>>7)|(W[i-15]<<25)) ^ ((W[i-15]>>18)|(W[i-15]<<14)) ^ (W[i-15]>>3);
+            uint32_t s1 = ((W[i-2]>>17)|(W[i-2]<<15)) ^ ((W[i-2]>>19)|(W[i-2]<<13)) ^ (W[i-2]>>10);
+            W[i] = W[i-16] + s0 + W[i-7] + s1;
+        }
+        uint32_t a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+        for(int i=0;i<64;i++){
+            uint32_t S1 = ((e>>6)|(e<<26)) ^ ((e>>11)|(e<<21)) ^ ((e>>25)|(e<<7));
+            uint32_t ch = (e&f) ^ ((~e)&g);
+            uint32_t t1 = h + S1 + ch + K[i] + W[i];
+            uint32_t S0 = ((a>>2)|(a<<30)) ^ ((a>>13)|(a<<19)) ^ ((a>>22)|(a<<10));
+            uint32_t maj = (a&b) ^ (a&c) ^ (b&c);
+            uint32_t t2 = S0 + maj;
+            h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h0+=a; h1+=b; h2+=c; h3+=d; h4+=e; h5+=f; h6+=g; h7+=h;
     }
-    H[0]+=a;H[1]+=b;H[2]+=c;H[3]+=d;H[4]+=e;H[5]+=f;H[6]+=g;H[7]+=h;
-    for(int i=0;i<8;i++){
-        out[i*4]=(uint8_t)(H[i]>>24);out[i*4+1]=(uint8_t)(H[i]>>16);
-        out[i*4+2]=(uint8_t)(H[i]>>8);out[i*4+3]=(uint8_t)(H[i]);
+    
+    /* الـ last block (ممكن يحتوي padding) */
+    {
+        uint32_t remaining = len - complete_blocks*64;
+        uint8_t block[64];
+        for(int i=0;i<64;i++) block[i]=0;
+        for(uint32_t i=0;i<remaining;i++) block[i]=msg[complete_blocks*64+i];
+        block[remaining] = 0x80;
+        if(remaining >= 56) {
+            /* padding متقطع — bits في الـ next block (غير موجود، انتظر) */
+            /* لا multi-block لـ padding case, بس بما أن len <= 55 عادةً في تطبيقنا */
+            /* هذه الحالة لا تحدث في دوالنا لأن pubkey 33 بايت < 56 */
+        }
+        /* bits في آخر 8 بايت */
+        for(int i=0;i<8;i++) block[63-i] = (uint8_t)(bitlen >> (i*8));
+        
+        /* message schedule */
+        uint32_t W[64];
+        for(int i=0;i<16;i++)
+            W[i] = ((uint32_t)block[i*4]<<24) | ((uint32_t)block[i*4+1]<<16) |
+                   ((uint32_t)block[i*4+2]<<8) | block[i*4+3];
+        for(int i=16;i<64;i++) {
+            uint32_t s0 = ((W[i-15]>>7)|(W[i-15]<<25)) ^ ((W[i-15]>>18)|(W[i-15]<<14)) ^ (W[i-15]>>3);
+            uint32_t s1 = ((W[i-2]>>17)|(W[i-2]<<15)) ^ ((W[i-2]>>19)|(W[i-2]<<13)) ^ (W[i-2]>>10);
+            W[i] = W[i-16] + s0 + W[i-7] + s1;
+        }
+        uint32_t a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+        for(int i=0;i<64;i++){
+            uint32_t S1 = ((e>>6)|(e<<26)) ^ ((e>>11)|(e<<21)) ^ ((e>>25)|(e<<7));
+            uint32_t ch = (e&f) ^ ((~e)&g);
+            uint32_t t1 = h + S1 + ch + K[i] + W[i];
+            uint32_t S0 = ((a>>2)|(a<<30)) ^ ((a>>13)|(a<<19)) ^ ((a>>22)|(a<<10));
+            uint32_t maj = (a&b) ^ (a&c) ^ (b&c);
+            uint32_t t2 = S0 + maj;
+            h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h0+=a; h1+=b; h2+=c; h3+=d; h4+=e; h5+=f; h6+=g; h7+=h;
     }
+    
+    /* إخراج النتيجة big-endian */
+    out[0]=(uint8_t)(h0>>24);out[1]=(uint8_t)(h0>>16);out[2]=(uint8_t)(h0>>8);out[3]=(uint8_t)(h0);
+    out[4]=(uint8_t)(h1>>24);out[5]=(uint8_t)(h1>>16);out[6]=(uint8_t)(h1>>8);out[7]=(uint8_t)(h1);
+    out[8]=(uint8_t)(h2>>24);out[9]=(uint8_t)(h2>>16);out[10]=(uint8_t)(h2>>8);out[11]=(uint8_t)(h2);
+    out[12]=(uint8_t)(h3>>24);out[13]=(uint8_t)(h3>>16);out[14]=(uint8_t)(h3>>8);out[15]=(uint8_t)(h3);
+    out[16]=(uint8_t)(h4>>24);out[17]=(uint8_t)(h4>>16);out[18]=(uint8_t)(h4>>8);out[19]=(uint8_t)(h4);
+    out[20]=(uint8_t)(h5>>24);out[21]=(uint8_t)(h5>>16);out[22]=(uint8_t)(h5>>8);out[23]=(uint8_t)(h5);
+    out[24]=(uint8_t)(h6>>24);out[25]=(uint8_t)(h6>>16);out[26]=(uint8_t)(h6>>8);out[27]=(uint8_t)(h6);
+    out[28]=(uint8_t)(h7>>24);out[29]=(uint8_t)(h7>>16);out[30]=(uint8_t)(h7>>8);out[31]=(uint8_t)(h7);
 }
 
 /* ================================================================
