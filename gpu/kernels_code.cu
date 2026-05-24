@@ -234,7 +234,11 @@ __global__ void k_debug_test(void){
     uint8_t rmd_out[20];
     d_ripemd160(sha_out, 32, rmd_out);  /* SHA256(abc) -> RIPEMD160 */
     /* هذا يعطينا hash160 لـ 'abc' */
-    printf("[DBG3] RIPEMD160(SHA256(abc))="); for(int i=0;i<20;i++) printf("%02x",rmd_out[i]); printf("\n");
+    printf("[DBG3] RIPEMD160(SHA256(abc))="); for(int i=0;i<20;i++) printf("%02x",rmd_out[i]); printf(" (expected: b1e4a59f4a9a15d5b7b4c45e07c1f5f7b3a49e1a)\n");
+    
+    /* اختبار RIPEMD160 مباشرة لـ "abc" */
+    d_ripemd160((const uint8_t*)"abc", 3, rmd_out);
+    printf("[DBG3b] RIPEMD160(abc)="); for(int i=0;i<20;i++) printf("%02x",rmd_out[i]); printf(" (expected: 8eb208f7e05d987a9b044a8e98c6b087f15a0bfc)\n");
     
     /* 4. اختبار compressed pubkey SHA256 مباشرة */
     uint8_t comp_pub[33] = {0x02,0x79,0xBE,0x66,0x7E,0xF9,0xDC,0xBB,0xAC,

@@ -28,7 +28,6 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
     uint32_t H[8] = {0x6A09E667,0xBB67AE85,0x3C6EF372,0xA54FF53A,
                      0x510E527F,0x9B05688C,0x1F83D9AB,0x5BE0CD19};
     uint64_t bitlen = (uint64_t)len * 8;
-    uint32_t remaining = len;
     
     for(uint32_t poff = 0; poff < len + 9; poff += 64) {
         uint8_t blk[64];
