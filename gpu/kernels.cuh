@@ -152,9 +152,10 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             t = (t<<S0[rd][p])|(t>>(32-S0[rd][p])); t += st[i4];
             st[i2] = (st[i2]<<10)|(st[i2]>>22);
             st[i0] = t;
-            /* circular shift: (a,b,c,d,e) → (e,a',rol(c),b,d) — skip last iteration */
+            /* circular shift: (a,b,c,d,e) → (e,a',b,c_rol,d) — skip last iteration */
+            /* IMPORTANT: reference passes (e,a,b,c,d) — b goes to c (then rol'd), c_rol goes to d */
             if(j < 79) {
-                uint32_t tmp[5]; tmp[0]=st[4]; tmp[1]=st[0]; tmp[2]=st[2]; tmp[3]=st[1]; tmp[4]=st[3];
+                uint32_t tmp[5]; tmp[0]=st[4]; tmp[1]=st[0]; tmp[2]=st[1]; tmp[3]=st[2]; tmp[4]=st[3];
                 st[0]=tmp[0];st[1]=tmp[1];st[2]=tmp[2];st[3]=tmp[3];st[4]=tmp[4];
             }
             
@@ -164,9 +165,9 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             t = (t<<S1[rd][p])|(t>>(32-S1[rd][p])); t += stp[i4];
             stp[i2] = (stp[i2]<<10)|(stp[i2]>>22);
             stp[i0] = t;
-            /* parallel shift: (Ap,Bp,Cp,Dp,Ep) → (Ep,Ap',rol(Cp),Bp,Dp) — skip last iteration */
+            /* parallel shift: (Ap,Bp,Cp,Dp,Ep) → (Ep,Ap',Bp,Cp_rol,Dp) — skip last iteration */
             if(j < 79) {
-                uint32_t tmp2[5]; tmp2[0]=stp[4]; tmp2[1]=stp[0]; tmp2[2]=stp[2]; tmp2[3]=stp[1]; tmp2[4]=stp[3];
+                uint32_t tmp2[5]; tmp2[0]=stp[4]; tmp2[1]=stp[0]; tmp2[2]=stp[1]; tmp2[3]=stp[2]; tmp2[4]=stp[3];
                 stp[0]=tmp2[0];stp[1]=tmp2[1];stp[2]=tmp2[2];stp[3]=tmp2[3];stp[4]=tmp2[4];
             }
         }
