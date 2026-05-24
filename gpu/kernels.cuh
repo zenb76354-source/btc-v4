@@ -115,11 +115,11 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
         {15, 5, 8,11,14,14, 6,14, 6, 9,12, 9, 5,15,11,12},
         { 8, 5,12, 9,12, 5,14, 6, 8,13, 6, 5,15,13,11,11}};
     /* functions */
-    #define F1(x,y,z) (x^y^z)
-    #define F2(x,y,z) ((x&y)|(~x&z))
-    #define F3(x,y,z) ((x|~y)^z)
-    #define F4(x,y,z) ((x&z)|(y&~z))
-    #define F5(x,y,z) (x^(y|~z))
+    #define F1(x,y,z) ((x)^(y)^(z))
+    #define F21(x,y,z) (((x)&(y))|((~(x))&(z)))
+    #define F31(x,y,z) (((x)|(~(y)))^(z))
+    #define F41(x,y,z) (((x)&(z))|((y)&(~(z))))
+    #define F51(x,y,z) ((x)^((y)|(~(z))))
     #define RL32(x,n) (((x)<<(n))|((x)>>(32-(n))))
     
     /* padding */
@@ -153,11 +153,16 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             int rd = j/16;
             int pos = j%16;
             /* right line */
-            uint32_t f = (rd==0?F1:rd==1?F2:rd==2?F3:rd==3?F4:F5)(r1,r2,r3);
+            uint32_t f;
+            if(rd==0) f=F1(r1,r2,r3); else if(rd==1) f=F21(r1,r2,r3);
+            else if(rd==2) f=F31(r1,r2,r3); else if(rd==3) f=F41(r1,r2,r3);
+            else f=F51(r1,r2,r3);
             uint32_t t = RL32(r0 + f + X[RR[rd][pos]] + KR[rd], SR[rd][pos]) + r4;
             r0=r4; r4=r3; r3=RL32(r2,10); r2=r1; r1=t;
             /* left line */
-            f = (rd==0?F5:rd==1?F4:rd==2?F3:rd==3?F2:F1)(l1,l2,l3);
+            if(rd==0) f=F51(l1,l2,l3); else if(rd==1) f=F41(l1,l2,l3);
+            else if(rd==2) f=F31(l1,l2,l3); else if(rd==3) f=F21(l1,l2,l3);
+            else f=F1(l1,l2,l3);
             t = RL32(l0 + f + X[RL[rd][pos]] + KL[rd], SL[rd][pos]) + l4;
             l0=l4; l4=l3; l3=RL32(l2,10); l2=l1; l1=t;
         }
@@ -179,10 +184,10 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
     out[16]=(uint8_t)H4; out[17]=(uint8_t)(H4>>8); out[18]=(uint8_t)(H4>>16); out[19]=(uint8_t)(H4>>24);
     
     #undef F1
-    #undef F2
-    #undef F3
-    #undef F4
-    #undef F5
+    #undef F21
+    #undef F31
+    #undef F41
+    #undef F51
     #undef RL32
 }
 
