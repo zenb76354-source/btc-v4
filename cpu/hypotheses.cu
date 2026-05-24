@@ -156,8 +156,7 @@ int h03_timestamp_pid(const secp256k1_context *ctx) {
 int h07_android(const secp256k1_context *ctx) {
     log_msg("[H07] Android SecureRandom...");
     volatile int g_found = 0;
-    secp256k1_context *ctx_copy = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-    memcpy((void*)ctx_copy, ctx, sizeof(secp256k1_context));
+    secp256k1_context *ctx_copy = secp256k1_context_clone(ctx);
 
     #pragma omp parallel for
     for (uint64_t key = 0; key < 40000000ULL; key++) {
@@ -419,8 +418,7 @@ int h23_php_mt_wallet(const secp256k1_context *ctx) {
 int h24_js_math_random(const secp256k1_context *ctx) {
     log_msg("[H24] JS Math.random() (V8 XorShift128+)...");
     volatile int g_found = 0;
-    secp256k1_context *ctx_copy = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-    memcpy((void*)ctx_copy, ctx, sizeof(secp256k1_context));
+    secp256k1_context *ctx_copy = secp256k1_context_clone(ctx);
 
     #pragma omp parallel for
     for (uint64_t seed = 0; seed < 30000000ULL; seed++) {
