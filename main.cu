@@ -106,6 +106,7 @@ static int run_seq(const char *nm, int type, uint64_t total, uint64_t batch) {
         else if(type==3) k3<<<blk,threads>>>(total,df,dfk);
         else if(type==20) k20<<<blk,threads>>>(total,df,dfk);
         else if(type==36) k36<<<blk,threads>>>(H36_START+s,b,df,dfk);
+        else if(type==48) k48<<<blk,threads>>>(s,b,df,dfk);
         cudaDeviceSynchronize();
         cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
         if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
@@ -340,6 +341,44 @@ int main() {
     if(run_h36_range("H36-A5f",A5_MS-TW,TW*2,3000000)) return 0;
     if(run_h36_range("H36-A6f",A6_MS-TW,TW*2,3000000)) return 0;
     if(run_h36_range("H36-A7f",A7_MS-TW,TW*2,3000000)) return 0;
+
+    /* ===== PHASE 5: MEGA INTEGER — كل uint64 0 → 2^48 ===== */
+    printf("\n===== PHASE 5: MEGA INTEGER (0 to 2^48) =====\n");
+    if(run_seq("H48",48,(1ULL<<48),50000000)) return 0;
+
+    /* ===== PHASE 6: ADDRESS/KEY DERIVED ===== */
+    printf("\n===== PHASE 6: ADDRESS/KEY HASHES =====\n");
+    {
+        int *df; uint64_t *dfk;
+        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
+        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
+        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
+        printf("[H50] Address/key based keys...\n");
+        k50<<<1,1>>>(df,dfk);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
+        if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+            found("H50",hfk,0); cudaFree(df); cudaFree(dfk); return 0;}
+        printf("[H50] Done.\n");
+        cudaFree(df); cudaFree(dfk);
+    }
+
+    /* ===== PHASE 7: REVERSE DICT ===== */
+    printf("\n===== PHASE 7: REVERSE DICT =====\n");
+    {
+        int *df; uint64_t *dfk;
+        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
+        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
+        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
+        printf("[H51] Reverse dict words...\n");
+        k51<<<1,1>>>(df,dfk);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
+        if(hf){uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+            found("H51",hfk,0); cudaFree(df); cudaFree(dfk); return 0;}
+        printf("[H51] Done.\n");
+        cudaFree(df); cudaFree(dfk);
+    }
 
     printf("\n===== ALL COMPLETE — No key found =====\n");
     return 0;

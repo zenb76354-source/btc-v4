@@ -129,3 +129,71 @@ __global__ void k18(void*f,void*fk){
     for(int x=0;x<al;x++)buf[x]=a[x];buf[al]=' ';
     for(int x=0;x<bl;x++)buf[al+1+x]=b[x];buf[al+1+bl]=0;
     uint8_t p[32];d_sha256((const uint8_t*)buf,al+1+bl,p);check_return(p,f,fk);}
+
+/* H48: كل uint64 من 0 إلى 2^48 (SHA256(integer)) */
+__global__ void k48(uint64_t st,uint64_t cn,void*f,void*fk){
+    uint64_t tid=blockIdx.x*blockDim.x+threadIdx.x;
+    if(tid>=cn||*(int*)f)return;
+    uint64_t val=st+tid; /* يولد 48-bit integer */
+    uint8_t m[8];for(int i=0;i<8;i++)m[7-i]=(uint8_t)(val>>(i*8));
+    uint8_t p[32];d_sha256(m,8,p);check_return(p,f,fk);}
+
+/* H50: SHA256(address string) لكل target */
+__global__ void k50(void*f,void*fk){
+    if(threadIdx.x||blockIdx.x)return;
+    /* العناوين كاملة */
+    const char *addrs[]={
+        "12rMpw5HnEvAw3nQqLmRBCQyuktfpa4eVw",
+        "1HLvaTs3zR3oev9ya7Pzp3GB9Gqfg6XYJT",
+        "1JA4MpuV8MMNYCDTFHdCQeXGyem7mqo4B4",
+        "13GvAdkFeHFGVxTHzcA2rD2e5BD4cGkbBH",
+        "1DTy9z4JvtqYsg44oagVpHqyQpF7ZLLs45",
+        "1MVLP2kRPNqz8VJUy83LstUoMQzUjgq4Zg",
+        "15QezNwA5ThiPf7wo89TTnfBwny93VQFTp",
+        "198aMn6ZYAczwrE5NvNTUMyJ5qkfy4g3Hi",
+        NULL
+    };
+    for(int i=0;addrs[i];i++){
+        if(*(int*)f)return;
+        int sl=n_strlen(addrs[i]);
+        uint8_t p[32];d_sha256((const uint8_t*)addrs[i],sl,p);check_return(p,f,fk);
+        /* address backwards */
+        char rev[64];for(int j=0;j<sl;j++)rev[j]=addrs[i][sl-1-j];rev[sl]=0;
+        d_sha256((const uint8_t*)rev,sl,p);check_return(p,f,fk);
+    }
+    /* RIPEMD160 hash itself as key */
+    for(int t=0;t<8;t++){
+        if(*(int*)f)return;
+        uint8_t p[32];d_sha256(d_targets+t*20,20,p);check_return(p,f,fk);
+    }
+    /* SHA256(Hash160) */
+    for(int t=0;t<8;t++){
+        if(*(int*)f)return;
+        uint8_t h[32];d_sha256(d_targets+t*20,20,h);
+        d_sha256(h,32,h);check_return(h,f,fk);
+    }
+    /* Double SHA256 of address */
+    for(int i=0;addrs[i];i++){
+        if(*(int*)f)return;
+        int sl=n_strlen(addrs[i]);
+        uint8_t h[32];d_sha256((const uint8_t*)addrs[i],sl,h);
+        d_sha256(h,32,h);check_return(h,f,fk);
+        /* dSHA256 backwards */
+        char rev[64];for(int j=0;j<sl;j++)rev[j]=addrs[i][sl-1-j];rev[sl]=0;
+        d_sha256((const uint8_t*)rev,sl,h);d_sha256(h,32,h);check_return(h,f,fk);
+    }
+}
+
+/* H51: reverse string لكل كلمة في d_dict */
+__global__ void k51(void*f,void*fk){
+    if(threadIdx.x||blockIdx.x)return;
+    int pos=0;uint8_t p[32];
+    while(d_dict[pos]){
+        if(*(int*)f)return;
+        int sl=n_strlen(d_dict+pos);
+        /* كل مرة نص عكسي */
+        char rev[256];for(int i=0;i<sl;i++)rev[i]=d_dict[pos+sl-1-i];rev[sl]=0;
+        d_sha256((const uint8_t*)rev,sl,p);check_return(p,f,fk);
+        pos+=sl+1;
+    }
+}

@@ -37,5 +37,8 @@ __global__ void k8(int nb, void *f, void *fk);
 __global__ void k1(void *f, void *fk);
 __global__ void k9(void *f, void *fk);
 __global__ void k18(void *f, void *fk);
+__global__ void k48(uint64_t st, uint64_t cn, void *f, void *fk);
+__global__ void k50(void *f, void *fk);
+__global__ void k51(void *f, void *fk);
 
 #endif /* KERNELS_API_H */
