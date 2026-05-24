@@ -30,6 +30,8 @@
 
 #include "../common/targets.h"
 #include "../common/check.h"
+#include <stdlib.h>
+#include <time.h>
 
 /* ================================================================
  *  H01: Brainwallet Dictionary  —  ~7M keys (7 variations × phrases.txt)

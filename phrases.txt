@@ -1,0 +1,115 @@
+# BTC-recovery test phrases for H01 (Brainwallet)
+# Each line = potential passphrase from 2009-2011 era
+satoshi
+Satoshi
+Satoshi Nakamoto
+bitcoin
+Bitcoin
+BTC
+btc
+blockchain
+Blockchain
+crypto
+Crypto
+cryptocurrency
+Cryptocurrency
+password
+Password
+passphrase
+secret
+Secret
+private
+Private
+key
+Key
+wallet
+Wallet
+elliptic
+SHA256
+hash
+Hash
+proof of work
+ProofOfWork
+proofOfWork
+hal finney
+Hal Finney
+HalFinney
+hashcash
+HashCash
+cypherpunk
+Cypherpunk
+cypherpunks
+Cypherpunks
+wei dai
+Wei Dai
+WeiDai
+adam back
+Adam Back
+AdamBack
+nick szabo
+Nick Szabo
+NickSzabo
+ECMAScript
+javascript
+JavaScript
+Java
+python
+Python
+mining
+Mining
+miner
+Miner
+genesis
+Genesis
+block zero
+BlockZero
+genesis block
+GenesisBlock
+first block
+FirstBlock
+timestamp
+Timestamp
+timechain
+TimeChain
+2009
+2010
+2011
+satoshi nakamoto 2008
+Satoshi Nakamoto 2008
+whitepaper
+WhitePaper
+white paper
+White Paper
+btc2009
+btc2010
+btc2011
+btc_2009
+btc_2010
+btc_2011
+SatoshiNakamoto
+satoshi_nakamoto
+bitcoin_mining
+bitcoinMining
+BitcoinMining
+proofofwork
+ProofOfWork
+stuart haber
+Stuart Haber
+dave Bayer
+Dave Bayer
+cryptoanarchy
+CryptoAnarchy
+anonymous
+Anonymous
+pseudonymous
+Pseudonymous
+privacy
+Privacy
+digital cash
+DigitalCash
+electronic cash
+ElectronicCash
+eCash
+ecash
+DigiCash
+digicash

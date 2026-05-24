@@ -123,7 +123,7 @@ int main(void) {
     if (!found) { found = h28_sequential_keys(ctx);       total_keys += 2000000; }
     if (!found) { found = h20_srand_time(ctx);            total_keys += 7201; }
     if (!found) { found = h03_timestamp_pid(ctx);         total_keys += 262000; }
-    if (!found) { found = h17_ts_word(ctx);               total_keys += 84; }
+    /* H17 done below in Phase 4 */
 
     /* ============================================================
      *  PHASE 2: GPU TIMESTAMP ms SWEEP (2009-2011)
