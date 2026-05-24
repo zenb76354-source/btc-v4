@@ -26,6 +26,9 @@
 /* ---------- H28: PID range كامل ---------- */
 #define H28_TOTAL   2000000000ULL      /* 0 → 2 مليار (Linux PID + pseudo-random) */
 
+/* ---------- H48: أعداد صحيحة ---------- */
+#define H48_TOTAL   10000000000ULL     /* 10 مليار فقط (بدل 281 تريليون — غير عملي) */
+
 /* ---------- تواريخ key لكل target (ms epoch) ---------- */
 #define A1_MS 1268728843000ULL
 #define A3_MS 1279199023000ULL
@@ -257,8 +260,39 @@ int main() {
     if(run_dict("H14",h14w,14)) return 0;
     const char *h15w[]={"20090101","20090103","20100101","20100316","20100522","20100711",
         "20100715","20100910","20100916","2009-01-01","2010-03-16","2010-05-22","2010-07-11",
-        "2010-07-15","2010-09-10","January 3 2009","March 16 2010","May 22 2010",NULL};
+        "2010-07-15","2010-09-10","January 3 2009","March 16 2010","May 22 2010",
+        "1.1.2009","3.1.2009","16.3.2010","15.7.2010","17.7.2010","10.9.2010","16.9.2010",NULL};
     if(run_dict("H15",h15w,15)) return 0;
+    
+    /* NEW H19: كلمات عامة يستخدمها كلّ المبتدئين */
+    const char *h19w[]={"bitcoin","admin","password","changeme","temp","test","test1","test123",
+        "test1234","changethis","default","generated","autogenerate","none","unknown",
+        "bitcoin123","password123","password1","Password1","abc123","123abc","qwerty",
+        "qwerty123","qwertyuiop","asdfgh","zxcvbn","iloveyou","letmein","welcome",
+        "monkey","dragon","master","sunshine","princess","football","baseball",NULL};
+    if(run_dict("H19",h19w,0)) return 0;
+    
+    /* NEW H22: رقم البلوك + تعديلات */
+    const char *h22w[]={"500","1000","2000","5000","10000","20000","30000","50000","70000",
+        "80000","90000","95000","100000","62870","80320","80327","80677","88509","89337",
+        "block500","block1000","block10000","block50000","block60000","block62870",
+        "block80000","b500","b1000","b10000","b50000","b62870","b80000",NULL};
+    if(run_dict("H22",h22w,0)) return 0;
+    
+    /* NEW H23: الهاشات (SHA256 of common strings) */
+    const char *h23w[]={"bitcoin","satoshi","bitcoin.org","satoshi nakamoto","satoshi@vistomail.com",
+        "v0.1","0.1.0","bitcoin v0.1","Satoshi Nakamoto","SHA256","sha256","BASE58","base58",
+        "cryptography","public key","private key","ECDSA","ecdsa","secp256k1",
+        "secp256k1","curve","elliptic curve","elliptic","Weierstrass",NULL};
+    if(run_dict("H23",h23w,0)) return 0;
+    
+    /* NEW H24: اقتباسات وكلمات من البيتكوين الأولى */
+    const char *h24w[]={"The Times 03/Jan/2009 Chancellor on brink of second bailout for banks",
+        "Times 03/Jan/2009 Chancellor","Chancellor on brink","bailout for banks",
+        "2009/01/03","3 January 2009","3 Jan 2009","03/Jan/2009","02/Jan/2009",
+        "2009-01-03 18:15:05","2009-01-03","Genesis","genesis block","block 0",
+        "block 1","block 2","block 9","block 100","block 500","block 1000",NULL};
+    if(run_dict("H24",h24w,0)) return 0;
     const char *h41w[]={"bitcoin","satoshi","password","private","secret","wallet","block",
         "chain","money","coin","miner","gold","crypto","admin","master","root","key","btc",
         "200","400","50","1200","2010","march","july","fifty","hundred","rich","lucky","empty","null",NULL};
@@ -288,8 +322,67 @@ int main() {
         "buy bitcoin","buy the dip","sell bitcoin","blockchain","decentralized","peer to peer",
         "cryptocurrency","private key","public key","brainwallet","paper wallet","cold storage",
         "50 BTC","50btc","fifty btc","400 BTC","400btc","casascius","bitcointalk",
-        "satoshi dice","bitcoin faucet","faucet",NULL};
+        "satoshi dice","bitcoin faucet","faucet",
+        "block","chain","blockchain","blocks","transactions","tx","txs","UTXO","utxo",
+        "proof of work","POW","difficulty","target","nonce","hash","hashcash",
+        "Distributed Network","P2P","Peer-to-Peer","electronic cash",
+        "Electronic Cash System","digital signature","double spend",
+        "Merkle tree","Merkle","timestamp server","timestamp",
+        "CPU","GPUs","GPU","miner","miners","CPU miner","50 BTC","100 BTC",
+        "25 BTC","12.5 BTC","block reward","reward",
+        "wallet","wallet.dat","encrypted wallet","keypool",
+        "Bitcoin Address","address","1","3","bc1",NULL};
     if(run_dict("H25",h25w,0)) return 0;
+    
+    /* NEW H34: أسماء الصرافات وزيارة 2010 */
+    const char *h34w[]={"mtgox","MtGox","MTGOX","MagicalTux","magicaltux","Jed McCaleb","jed",
+        "jedmccaleb","Mark Karpeles","karpeles","Magical Tux","wizard",
+        "bitcoinmarket","BitcoinMarket.com","Liberty Standard","libertystandard",
+        "newlibertystandard","NewLibertyStandard","dwdollar","dw",
+        "DeepBit","deepbit","deepbit.net","Slush","slush","slushpool",
+        "BTC Guild","btcguild","Eligius","eligius","GHash","ghash",
+        "50BTC","50btc.com","BTC China","btcchina",NULL};
+    if(run_dict("H34",h34w,0)) return 0;
+    
+    /* NEW H37: الـ Pizza keys */
+    const char *h37w[]={"pizza","Pizza","PIZZA","10000","10000btc","10000BTC","10000 pizza",
+        "pizza day","Pizza Day","pizzaday","Laszlo","laszlo","Laszlo Hanyecz",
+        "laszlohanyecz","hanyecz","10,000","10000 bitcoins","10000 bitcoins for pizza",
+        "pizza for 10000","pizza for bitcoins","Hungarian","Florida",
+        "bitcoin pizza","bitcoinpizza","pizzabeer","beer","beerpizza",NULL};
+    if(run_dict("H37",h37w,0)) return 0;
+    
+    /* NEW H38: أسامي الأشخاص المهمين */
+    const char *h38w[]={"Satoshi Nakamoto","SATOSHI NAKAMOTO","Satoshi","satoshi","SATOSHI",
+        "satoshi.nakamoto","SatoshiNakamoto","Hal Finney","hal finney","hal","HAL FINNEY",
+        "hal@finney","hal.finney","hf","Gavin Andresen","gavin andresen","gavinandresen",
+        "gavin","GAVIN","Gavin","gavin@andresen","Nick Szabo","szabo","szabonick",
+        "NickSzabo","Adam Back","adamback","adam back","HashCash","hashcash",
+        "Wei Dai","weidai","wei dai","WeiDai","b-money","bmoney",
+        "Martti Malmi","sirius","sirius-m","marti","malmi",
+        "Mike Hearn","mikehearn","mike hearn",NULL};
+    if(run_dict("H38",h38w,0)) return 0;
+    
+    /* NEW H39: كلمات الأرقام */
+    const char *h39w[]={"zero","one","two","three","four","five","six","seven","eight","nine","ten",
+        "eleven","twelve","thirteen","fourteen","fifteen","sixteen","twenty","thirty","forty","fifty",
+        "hundred","thousand","million","first","second","third",
+        "two hundred","two hundred fifty","twohundred","twohundredfifty",
+        "four hundred","fourhundred","twelve hundred","twelvehundred",
+        "two thousand","twothousand","two thousand ten","twothousandten",
+        "two thousand nine","twothousandnine",NULL};
+    if(run_dict("H39",h39w,0)) return 0;
+    
+    /* NEW H40: التواريخ بولاية مختلفة */
+    const char *h40w[]={"2010-03-16 04:40:43","2010-07-15 13:03:43","2010-07-15 14:13:30",
+        "2010-07-17 22:25:45","2010-09-10 11:45:56","2010-09-16 01:46:43",
+        "2010-03-16 04:40","2010-07-15 13:03","2010-07-15 14:13",
+        "2010-07-17 22:25","2010-09-10 11:45","2010-09-16 01:46",
+        "16.03.2010","15.07.2010","17.07.2010","10.09.2010","16.09.2010",
+        "03/16/2010","07/15/2010","07/17/2010","09/10/2010","09/16/2010",
+        "16 March 2010","15 July 2010","17 July 2010","10 Sep 2010","16 Sep 2010",
+        "March 16 2010","July 15 2010","July 17 2010","Sep 10 2010","Sep 16 2010",NULL};
+    if(run_dict("H40",h40w,0)) return 0;
 
     /* ===== PHASE 1: MEDIUM (2M keys أو أقل لكل kernel) ===== */
     printf("\n===== PHASE 1: MEDIUM SEQUENTIAL =====\n");
@@ -342,9 +435,13 @@ int main() {
     if(run_h36_range("H36-A6f",A6_MS-TW,TW*2,3000000)) return 0;
     if(run_h36_range("H36-A7f",A7_MS-TW,TW*2,3000000)) return 0;
 
-    /* ===== PHASE 5: MEGA INTEGER — كل uint64 0 → 2^48 ===== */
-    printf("\n===== PHASE 5: MEGA INTEGER (0 to 2^48) =====\n");
-    if(run_seq("H48",48,(1ULL<<48),50000000)) return 0;
+    /* ===== PHASE 5: INTEGER RANGE 0 → 10B ===== */
+    printf("\n===== PHASE 5: INTEGER SWEEP (0 to 10B) =====\n");
+    if(run_seq("H48",48,H48_TOTAL,50000000)) return 0;
+    
+    /* ===== PHASE 5b: INTEGER RANGE 0 → 1B (with 8-byte LE) ===== */
+    printf("\n===== PHASE 5b: INTEGER SWEEP LE (0 to 1B) =====\n");
+    if(run_seq("H48",28,1000000000ULL,50000000)) return 0;
 
     /* ===== PHASE 6: ADDRESS/KEY DERIVED ===== */
     printf("\n===== PHASE 6: ADDRESS/KEY HASHES =====\n");
