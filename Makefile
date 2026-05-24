@@ -1,5 +1,5 @@
 CC = nvcc
-CFLAGS = -O2 -arch=sm_100 -std=c++11
+CFLAGS = -O2 -arch=sm_100 -std=c++11 -rdc=true
 LDFLAGS =
 TARGET = btc-recovery
 
