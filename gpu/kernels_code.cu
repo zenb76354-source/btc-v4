@@ -23,7 +23,11 @@ __device__ static void check_return(const uint8_t *pk, void *fp, void *fkp) {
     int *f = (int*)fp; uint64_t *fk = (uint64_t*)fkp;
     if(*f) return;
     uint64_t k[4];
-    for(int i=0;i<4;i++) k[i]=((uint64_t)pk[i*8]<<56)|((uint64_t)pk[i*8+1]<<48)|((uint64_t)pk[i*8+2]<<40)|((uint64_t)pk[i*8+3]<<32)|((uint64_t)pk[i*8+4]<<24)|((uint64_t)pk[i*8+5]<<16)|((uint64_t)pk[i*8+6]<<8)|pk[i*8+7];
+    /* تحويل Big-endian 32-byte إلى uint64[4] Little-endian */
+    /* pk[0]=MSB, pk[31]=LSB */
+    /* bit0 من المفتاح = أقل بت في pk[31] */
+    /* في uint64[4]: k[0] يحتوي على أقل 64 بت = pk[24..31] */
+    for(int i=0;i<4;i++) k[3-i]=((uint64_t)pk[i*8]<<56)|((uint64_t)pk[i*8+1]<<48)|((uint64_t)pk[i*8+2]<<40)|((uint64_t)pk[i*8+3]<<32)|((uint64_t)pk[i*8+4]<<24)|((uint64_t)pk[i*8+5]<<16)|((uint64_t)pk[i*8+6]<<8)|pk[i*8+7];
     uint8_t h[20]; if(!d_pk2h160(k,h)) return;
     for(int t=0;t<8;t++){int m=1; for(int i=0;i<20;i++) if(h[i]!=d_targets[t*20+i]){m=0;break;}
         if(m){atomicExch(f,1);for(int i=0;i<4;i++)fk[i]=k[i];return;}}
