@@ -11,7 +11,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "gpu/kernels.cuh"
+#include "gpu/kernels_api.h"
 
 #define DICT_MAX 8192
 #define MAX_PHRASES 4096
