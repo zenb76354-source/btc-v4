@@ -92,7 +92,7 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
     for(int i=0;i<64;i++)blk[i]=0;
     for(uint32_t i=0;i<len;i++)blk[i]=msg[i];
     blk[len]=0x80;
-    for(int i=0;i<8;i++)blk[63-i]=(uint8_t)(bits>>(i*8));
+    for(int i=0;i<8;i++)blk[56+i]=(uint8_t)(bits>>(i*8));
     for(int i=0;i<16;i++)
         X[i]=(uint32_t)blk[i*4]|((uint32_t)blk[i*4+1]<<8)|
              ((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
