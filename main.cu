@@ -20,6 +20,15 @@
 #include <string.h>
 #include <time.h>
 
+/* ================================================================
+ *  CONSTANT MEMORY — defined BEFORE kernels
+ * ================================================================ */
+
+__constant__ uint8_t d_targets[8*20];
+__constant__ char d_phrases[4096*256];
+__constant__ int d_num_phrases;
+__constant__ uint8_t d_block_hashes[200000*32];
+
 #include "gpu/kernels.cuh"
 #include "gpu/gpu_hypo_small.cuh"
 
@@ -31,11 +40,15 @@
 #define MAX_PHRASES 4096
 #define MAX_PHRASE_LEN 256
 
-/* H36 timestamp range */
+#define START_MS 1230768000000ULL  /* 2009-01-01 */
+#define END_MS   1325376000000ULL  /* 2012-01-01 */
+#define TOTAL_H36_KEYS (END_MS - START_MS)
+
+#define H28_MAX 2000000
+#define H08_MAX 200000
 
 /* ================================================================
  *  GPU KERNEL: H36 timestamp ms → ECC → hash160 → compare
- *  تعريفه قبل main() لأنه مستعمل فيه
  * ================================================================ */
 
 __global__ void k_h36_pure(
@@ -48,7 +61,6 @@ __global__ void k_h36_pure(
 
     uint64_t ms = start_ms + tid;
 
-    /* SHA256 of ms (8-byte big-endian) */
     uint8_t scalar[32];
     {
         uint8_t msg[8];
@@ -56,7 +68,6 @@ __global__ void k_h36_pure(
         d_sha256(msg, 8, scalar);
     }
 
-    /* Convert scalar bytes to 4× uint64 LE */
     uint64_t k[4];
     for (int i = 0; i < 4; i++) {
         k[i] = ((uint64_t)scalar[i*8]<<56) | ((uint64_t)scalar[i*8+1]<<48) |
@@ -65,11 +76,9 @@ __global__ void k_h36_pure(
                ((uint64_t)scalar[i*8+6]<<8)  | (uint64_t)scalar[i*8+7];
     }
 
-    /* Compute hash160 via ECC */
     uint8_t h160[20];
     if (!d_pk2h160(k, h160)) return;
 
-    /* Compare against all 8 targets */
     for (int t = 0; t < NUM_TARGETS; t++) {
         int match = 1;
         for (int i = 0; i < 20; i++) {
@@ -81,29 +90,9 @@ __global__ void k_h36_pure(
     }
 }
 
-/* H36 timestamp range */
-#define START_MS 1230768000000ULL  /* 2009-01-01 */
-#define END_MS   1325376000000ULL  /* 2012-01-01 */
-#define TOTAL_H36_KEYS (END_MS - START_MS)
-
-/* H28 range */
-#define H28_MAX 2000000
-
-/* H08 range */
-#define H08_MAX 200000
-
 /* ================================================================
  *  HELPERS
  * ================================================================ */
-
-/* ================================================================
- *  CONSTANT MEMORY — shared between main and gpu_hypo_small.cuh
- * ================================================================ */
-
-__constant__ uint8_t d_targets[8*20];
-__constant__ char d_phrases[4096*256];
-__constant__ int d_num_phrases;
-__constant__ uint8_t d_block_hashes[200000*32];
 
 static void print_key(const uint64_t *k) {
     for (int i = 0; i < 4; i++) printf("%016llx", (unsigned long long)k[i]);
@@ -222,7 +211,7 @@ static int run_h01() {
     int h_flag=0; cudaMemcpy(d_flag,&h_flag,sizeof(int),cudaMemcpyHostToDevice);
     uint64_t h_zero[4]={0}; cudaMemcpy(d_fk,h_zero,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
 
-    int n=d_num_phrases;
+    int n; cudaMemcpyFromSymbol(&n, d_num_phrases, sizeof(int));
     printf("[H01] Brainwallet (%d phrases × 7 variants)...\n", n);
     uint64_t t0=time_ms();
     int threads=128; int blocks=(n+threads-1)/threads;
@@ -252,7 +241,7 @@ static int run_h09() {
     int h_flag=0; cudaMemcpy(d_flag,&h_flag,sizeof(int),cudaMemcpyHostToDevice);
     uint64_t h_zero[4]={0}; cudaMemcpy(d_fk,h_zero,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
 
-    int n=d_num_phrases;
+    int n; cudaMemcpyFromSymbol(&n, d_num_phrases, sizeof(int));
     printf("[H09] Deep brainwallet (%d phrases × 5 years)...\n", n);
     uint64_t t0=time_ms();
     int threads=128; int blocks=(n+threads-1)/threads;
@@ -321,7 +310,7 @@ static int run_h08() {
  * ================================================================ */
 
 static int run_h18() {
-    int n=d_num_phrases;
+    int n; cudaMemcpyFromSymbol(&n, d_num_phrases, sizeof(int));
     if(n<2){printf("[H18] Need >=2 phrases, skipping\n");return 0;}
     uint64_t total_pairs = (uint64_t)n * (n-1) / 2;
     printf("[H18] Multi-word (%d choose 2 = %llu)...\n", n, (unsigned long long)total_pairs);

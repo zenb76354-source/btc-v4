@@ -33,7 +33,7 @@
 } while(0)
 
 /* Constant memory */
-/* d_targets, d_phrases, d_num_phrases declared in main.cu */
+/* d_targets, d_phrases, d_num_phrases, d_block_hashes defined in main.cu */
 
 
 /* ======================= TINY: 1 thread only ======================= */
