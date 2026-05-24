@@ -422,4 +422,32 @@ __device__ static void d_fe_reduce(d_fe *r) {
     }
 }
 
+/* ================================================================
+ *  d_pk2h160 — Derive hash160 from a private key scalar
+ *  
+ *  Uses secp256k1 point multiplication to derive the public key,
+ *  then SHA256 → RIPEMD160 to get the hash.
+ *  
+ *  Returns 1 on success, 0 if scalar >= order (invalid)
+ *  
+ *  NOTE: This is a simplified version. For a full secp256k1
+ *  GPU implementation, consider using cuEC or custom implementation.
+ * ================================================================ */
+
+__device__ int d_pk2h160(const uint64_t *scalar, uint8_t h160[20]) {
+    /* TODO: Full secp256k1 GPU point multiplication */
+    /* 
+     * For RTX 5090, the most efficient approach is:
+     * 1. Use CPU-side secp256k1 for verification (already done via check.h)
+     * 2. GPU only handles SHA256 of timestamps 
+     * 3. Send candidate private keys back to CPU for verification
+     *
+     * For a pure GPU solution, implement:
+     * - secp256k1 point multiplication on curve secp256k1
+     * - Jacobian coordinates with endomorphism optimization
+     * - d_sha256 then d_ripemd160 on the compressed public key
+     */
+    return 1;  /* placeholder: all candidates valid */
+}
+
 #endif  /* KERNELS_CUH */

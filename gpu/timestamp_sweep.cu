@@ -22,6 +22,7 @@
 
 #include "../common/targets.h"
 #include "kernels.cuh"
+#include "../common/check.h"
 
 /* ---------------------------------------------------------------
  *  GPU KERNEL: kernel_timestamp_ms_multi
