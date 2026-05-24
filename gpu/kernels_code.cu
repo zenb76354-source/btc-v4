@@ -4,6 +4,7 @@
 
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /* extern from main.cu */
 extern __constant__ uint8_t d_targets[160];
