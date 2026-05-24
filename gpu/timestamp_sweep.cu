@@ -26,7 +26,7 @@
 
 #include "../common/targets.h"
 #include "../common/check.h"
-#include "kernels.cuh"
+#include "kernels_api.h"
 
 /* ---------------------------------------------------------------
  *  GPU KERNEL: kernel_timestamp_gen

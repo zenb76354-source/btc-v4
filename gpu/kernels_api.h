@@ -9,6 +9,10 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 
+/* Device function declarations (from kernels.cuh → defined in kernels_code.cu) */
+__device__ void d_sha256(const uint8_t *msg, int len, uint8_t *out);
+__device__ int  d_pk2h160(const uint64_t pk[4], uint8_t h160[20]);
+
 /* __constant__ arrays (allocated in main.cu, used in kernels_code.cu) */
 extern __constant__ uint8_t d_targets[160];
 extern __constant__ char d_dict[8192];
