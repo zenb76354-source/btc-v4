@@ -1,6 +1,7 @@
 CC = nvcc
 CFLAGS = -O2 -arch=sm_100 -std=c++11
-LDFLAGS = -lsecp256k1 -lssl -lcrypto
+# LDFLAGS = -lsecp256k1 -lssl -lcrypto  # No longer needed — all ECC is on GPU now
+LDFLAGS =
 TARGET = btc-recovery
 
 all: $(TARGET)
