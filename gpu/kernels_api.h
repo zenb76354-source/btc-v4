@@ -16,9 +16,11 @@ __device__ int  d_pk2h160(const uint64_t pk[4], uint8_t h160[20]);
 /* __constant__ arrays (allocated in main.cu, used in kernels_code.cu) */
 extern __constant__ uint8_t d_targets[160];
 extern __constant__ char d_dict[8192];
-extern __constant__ char d_phrases[1048576];
 extern __constant__ int d_num_phrases;
-extern __constant__ uint8_t d_block_hashes[6400000];
+
+/* Large arrays: use __device__ (global memory), NOT __constant__ (limited to 64KB) */
+extern __device__ char d_phrases[1048576];
+extern __device__ uint8_t d_block_hashes[6400000];
 
 /* Kernel declarations */
 __global__ void k21(void *f, void *fk);

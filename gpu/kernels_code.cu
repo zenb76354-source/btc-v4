@@ -5,12 +5,12 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 
-/* extern __constant__ from main.cu */
+/* extern from main.cu */
 extern __constant__ uint8_t d_targets[160];
 extern __constant__ char d_dict[8192];
-extern __constant__ char d_phrases[1048576];
 extern __constant__ int d_num_phrases;
-extern __constant__ uint8_t d_block_hashes[6400000];
+extern __device__ char d_phrases[1048576];
+extern __device__ uint8_t d_block_hashes[6400000];
 
 #include "kernels.cuh"
 

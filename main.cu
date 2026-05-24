@@ -25,9 +25,11 @@
 /* Target definitions */
 __constant__ uint8_t d_targets[8*20];
 __constant__ char d_dict[DICT_MAX];
-__constant__ char d_phrases[MAX_PHRASES*MAX_PHRASE_LEN];
 __constant__ int d_num_phrases;
-__constant__ uint8_t d_block_hashes[200000*32];
+
+/* Large arrays: __device__ (global memory), NOT __constant__ (64KB limit) */
+__device__ char d_phrases[MAX_PHRASES*MAX_PHRASE_LEN];
+__device__ uint8_t d_block_hashes[200000*32];
 
 /* External kernel declarations (defined in kernels_code.cu) */
 extern __global__ void k21(void*,void*);
