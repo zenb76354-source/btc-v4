@@ -137,7 +137,6 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             blk[rem] = 0x80;
             /* bit-length will be in next block's blk[56..63] (handled by rem==0 case above) */
         }
-        }
         uint32_t X[16];
         for(int i=0;i<16;i++) X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
         
