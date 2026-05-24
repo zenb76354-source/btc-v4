@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdarg.h>
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
 #include <secp256k1.h>
