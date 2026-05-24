@@ -4,7 +4,7 @@ LDFLAGS =
 TARGET = btc-recovery
 
 # Files
-KERNEL_OBJ = gpu/kernels_code.o
+KERNEL_OBJ = gpu/kernels_code.o gpu/debug_sanity.o
 MAIN_OBJ = main.o
 DLINK_OBJ = dlink.o
 
@@ -12,6 +12,9 @@ all: $(TARGET)
 
 # Step 1: Compile kernels code (device)
 $(KERNEL_OBJ): gpu/kernels_code.cu gpu/kernels.cuh
+	$(CC) $(CFLAGS) -c $< -o $@
+
+gpu/debug_sanity.o: gpu/debug_sanity.cu gpu/kernels.cuh
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Step 2: Compile main (host)

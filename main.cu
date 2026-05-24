@@ -252,43 +252,11 @@ int main() {
     };
     cudaMemcpyToSymbol(d_targets,ht,8*20);
 
-    /* ===== SANITY CHECK: التحقق من صحة crypto على GPU ===== */
-    /* نضيف target وهمي: hash160 للـ address اللي ينتج من privkey=0x0000...0001
-       هذا المفتاح ينتج address: 1EHNa6b34hmqoEgmcer8Kyo3Vs7NPre6MG
-       hash160: ecdd3099373e476a2e7a5e56e5da2ac3750cdcbc */
-    {
-        uint8_t mod[8*20];
-        memcpy(mod,ht,8*20);
-        /* hash160 من compressed pubkey: privkey=1 -> pubkey=G -> compressed 0279BE66... */
-        /* هذا هو hash160 الصحيح لما GPU يحسب 0279BE66... -> SHA256 -> RIPEMD160 */
-        const uint8_t known_h160[20] = {0x75,0x1e,0x76,0xe8,0x19,0x91,0x96,0xd4,0x54,0x94,0x1c,0x45,0xd1,0xb3,0xa3,0x23,0xf1,0x43,0x3b,0xd6};
-        memcpy(mod+7*20,known_h160,20);  /* نبدل E1 */
-        cudaMemcpyToSymbol(d_targets,mod,8*20);
-        
-        int *df; uint64_t *dfk;
-        cudaMalloc(&df,sizeof(int)); cudaMalloc(&dfk,4*sizeof(uint64_t));
-        int hf=0; cudaMemcpy(df,&hf,sizeof(int),cudaMemcpyHostToDevice);
-        uint64_t hz[4]={0}; cudaMemcpy(dfk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
-        printf("\n===== SANITY CHECK =====\n");
-        printf("Testing: privkey=1 -> 1EHNa6b34hmqoEgmcer8Kyo3Vs7NPre6MG\n");
-        /* kernel خاص يختبر privkey=1 مباشرة */
-        k_sanity<<<1,1>>>(df,dfk);
-        cudaDeviceSynchronize();
-        cudaMemcpy(&hf,df,sizeof(int),cudaMemcpyDeviceToHost);
-        if(hf){
-            uint64_t hfk[4]; cudaMemcpy(hfk,dfk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
-            printf("\n*** SANITY CHECK: KEY FOUND! *** key: ");
-            for(int i=0;i<4;i++) printf("%016llx",(unsigned long long)hfk[i]);
-            printf("\n>>> CRYPTO ON GPU IS CORRECT <<<\n");
-        } else {
-            printf("\n*** SANITY FAILED! privkey=1 NOT matched ***\n");
-            printf(">>> GPU crypto may have bugs! <<<\n");
-        }
-        cudaFree(df); cudaFree(dfk);
-        
-        /* استرجاع الـ targets الأصلية */
-        cudaMemcpyToSymbol(d_targets,ht,8*20);
-    }
+    /* ===== SANITY CHECK v2: debug عميق ===== */
+    printf("\n===== SANITY CHECK (DEEP DEBUG) =====\n");
+    k_debug_test<<<1,1>>>();
+    cudaDeviceSynchronize();
+    printf("Done.\n");
 
     int have_ph = load_phrases();
 

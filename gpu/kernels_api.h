@@ -41,6 +41,7 @@ __global__ void k48(uint64_t st, uint64_t cn, void *f, void *fk);
 __global__ void k50(void *f, void *fk);
 __global__ void k51(void *f, void *fk);
 __global__ void k_sanity(void *f, void *fk);
+__global__ void k_debug_test(void);
 __global__ void k52(void *f, void *fk);
 
 #endif /* KERNELS_API_H */
