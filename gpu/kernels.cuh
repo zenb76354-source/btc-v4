@@ -119,10 +119,13 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
         for(int i=0;i<64;i++)blk[i]=0;
         uint32_t poff=b*64;
         for(uint32_t i=0;i<64&&(poff+i)<len;i++) blk[i]=msg[poff+i];
-        if(poff+64>=len) {  /* last block (or block containing the end of message) */
-            int rem = len<b*64+64 ? len%(uint32_t)64 : 64;
-            if(rem==64) rem=0;  /* full block case */
-            blk[rem]=0x80;
+        /* padding: 0x80 after last msg byte, then bit length in last 8 bytes */
+        uint32_t rem = len - b*64;  /* bytes remaining in this block */
+        if(rem < 64) {
+            blk[rem] = 0x80;
+            for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
+        } else if(b == blkcnt-1) {
+            /* full last block: pad is in a whole new block (this shouldn't happen for RIPEMD160 but be safe) */
             for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
         }
         uint32_t X[16];
@@ -140,9 +143,11 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             t = (t<<S0[rd][p])|(t>>(32-S0[rd][p])); t += st[i4];
             st[i2] = (st[i2]<<10)|(st[i2]>>22);
             st[i0] = t;
-            /* circular shift: (a,b,c,d,e) → (e,a',rol(c),b,d) */
-            uint32_t tmp[5]; tmp[0]=st[4]; tmp[1]=st[0]; tmp[2]=st[2]; tmp[3]=st[1]; tmp[4]=st[3];
-            st[0]=tmp[0];st[1]=tmp[1];st[2]=tmp[2];st[3]=tmp[3];st[4]=tmp[4];
+            /* circular shift: (a,b,c,d,e) → (e,a',rol(c),b,d) — skip last iteration */
+            if(j < 79) {
+                uint32_t tmp[5]; tmp[0]=st[4]; tmp[1]=st[0]; tmp[2]=st[2]; tmp[3]=st[1]; tmp[4]=st[3];
+                st[0]=tmp[0];st[1]=tmp[1];st[2]=tmp[2];st[3]=tmp[3];st[4]=tmp[4];
+            }
             
             /* parallel line */
             f = (rd==0?d_rmd_f5:(rd==1?d_rmd_f4:(rd==2?d_rmd_f3:(rd==3?d_rmd_f2:d_rmd_f1))))(stp[i1],stp[i2],stp[i3]);
@@ -150,9 +155,11 @@ __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out
             t = (t<<S1[rd][p])|(t>>(32-S1[rd][p])); t += stp[i4];
             stp[i2] = (stp[i2]<<10)|(stp[i2]>>22);
             stp[i0] = t;
-            /* parallel shift: (Ap,Bp,Cp,Dp,Ep) → (Ep,Ap',rol(Cp),Bp,Dp) */
-            tmp[0]=stp[4]; tmp[1]=stp[0]; tmp[2]=stp[2]; tmp[3]=stp[1]; tmp[4]=stp[3];
-            stp[0]=tmp[0];stp[1]=tmp[1];stp[2]=tmp[2];stp[3]=tmp[3];stp[4]=tmp[4];
+            /* parallel shift: (Ap,Bp,Cp,Dp,Ep) → (Ep,Ap',rol(Cp),Bp,Dp) — skip last iteration */
+            if(j < 79) {
+                uint32_t tmp2[5]; tmp2[0]=stp[4]; tmp2[1]=stp[0]; tmp2[2]=stp[2]; tmp2[3]=stp[1]; tmp2[4]=stp[3];
+                stp[0]=tmp2[0];stp[1]=tmp2[1];stp[2]=tmp2[2];stp[3]=tmp2[3];stp[4]=tmp2[4];
+            }
         }
         uint32_t t=H1+st[2]+stp[3];H1=H2+st[3]+stp[4];H2=H3+st[4]+stp[0];
         H3=H4+st[0]+stp[1];H4=H0+st[1]+stp[2];H0=t;
