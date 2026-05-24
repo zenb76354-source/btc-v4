@@ -78,117 +78,71 @@ __device__ static void d_sha256(const uint8_t *msg, uint32_t len, uint8_t out[32
  *  RIPEMD-160 (local tables only — no static const)
  * ================================================================ */
 
-/* RIPEMD-160 — كاملة من الصفر */
+/* RIPEMD-160 — كاملة من كتابة نظيفة مع دوال مساعدة */
+__device__ static uint32_t d_rmd_rol(uint32_t x, int n) { return (x<<n)|(x>>(32-n)); }
+__device__ static uint32_t d_rmd_f1(uint32_t x,uint32_t y,uint32_t z){return x^y^z;}
+__device__ static uint32_t d_rmd_f2(uint32_t x,uint32_t y,uint32_t z){return (x&y)|((~x)&z);}
+__device__ static uint32_t d_rmd_f3(uint32_t x,uint32_t y,uint32_t z){return (x|(~y))^z;}
+__device__ static uint32_t d_rmd_f4(uint32_t x,uint32_t y,uint32_t z){return (x&z)|(y&(~z));}
+__device__ static uint32_t d_rmd_f5(uint32_t x,uint32_t y,uint32_t z){return x^(y|(~z));}
+/* lookup function: F[rd] for right line */
+__device__ static uint32_t d_rmd_fr(int rd, uint32_t x,uint32_t y,uint32_t z){
+    if(rd==0)return d_rmd_f1(x,y,z);if(rd==1)return d_rmd_f2(x,y,z);
+    if(rd==2)return d_rmd_f3(x,y,z);if(rd==3)return d_rmd_f4(x,y,z);
+    return d_rmd_f5(x,y,z);
+}
+/* lookup function: F_rev[rd] for left line */
+__device__ static uint32_t d_rmd_fl(int rd, uint32_t x,uint32_t y,uint32_t z){
+    if(rd==0)return d_rmd_f5(x,y,z);if(rd==1)return d_rmd_f4(x,y,z);
+    if(rd==2)return d_rmd_f3(x,y,z);if(rd==3)return d_rmd_f2(x,y,z);
+    return d_rmd_f1(x,y,z);
+}
+
 __device__ static void d_ripemd160(const uint8_t *msg, uint32_t len, uint8_t out[20]) {
-    /* IV */
-    uint32_t H0=0x67452301, H1=0xEFCDAB89, H2=0x98BADCFE, H3=0x10325476, H4=0xC3D2E1F0;
-    /* K constants for right (parallel) line */
-    const uint32_t KR[5] = {0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E};
-    /* K constants for left (original) line */
-    const uint32_t KL[5] = {0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000};
-    /* RR: message order for right line */
-    const uint32_t RR[5][16] = {
-        { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15},
-        { 7, 4,13, 1,10, 6,15, 3,12, 0, 9, 5, 2,14,11, 8},
-        { 3,10,14, 4, 9,15, 8, 1, 2, 7, 0, 6,13,11, 5,12},
-        { 1, 9,11,10, 0, 8,12, 4,13, 3, 7,15,14, 5, 6, 2},
-        { 4, 0, 5, 9, 7,12, 2,10,14, 1, 3, 8,11, 6,15,13}};
-    /* RL: message order for left line */
-    const uint32_t RL[5][16] = {
-        { 5,14, 7, 0, 9, 2,11, 4,13, 6,15, 8, 1,10, 3,12},
-        { 6,11, 3, 7, 0,13, 5,10,14,15, 8,12, 4, 9, 1, 2},
-        {15, 5, 1, 3, 7,14, 6, 9,11, 8,12, 2,10, 0, 4,13},
-        { 8, 6, 4, 1, 3,11,15, 0, 5,12, 2,13, 9, 7,10,14},
-        {12,15,10, 4, 1, 5, 8, 7, 6, 2,13,14, 0, 3, 9,11}};
-    /* SR: shift amounts for right line */
-    const uint32_t SR[5][16] = {
-        {11,14,15,12, 5, 8, 7, 9,11,13,14,15, 6, 7, 9, 8},
-        {12,13,11,15, 6, 9, 9, 7,12,15,11,13, 7,15, 7,12},
-        {13,15,14,11, 7, 7, 6,12,13,13,11,15, 9,11, 9, 7},
-        { 9, 9,13,15, 6,14, 8,11,13,15,10,14,10,13, 9,13},
-        {15, 5, 8,11,14,14, 6,14, 6, 9,12, 9,14, 5,15,11}};
-    /* SL: shift amounts for left line */
-    const uint32_t SL[5][16] = {
-        { 8, 9, 9,11,13,15,15, 5, 7, 7, 8,11,14,14,12, 6},
-        { 9,13,15, 7,12, 8, 9,11, 7, 7,12, 7, 6,15,13,11},
-        { 9, 7,15,11, 8, 6, 6,14,12,13, 5,14,13,13, 7, 5},
-        {15, 5, 8,11,14,14, 6,14, 6, 9,12, 9, 5,15,11,12},
-        { 8, 5,12, 9,12, 5,14, 6, 8,13, 6, 5,15,13,11,11}};
-    /* functions */
-    #define F1(x,y,z) ((x)^(y)^(z))
-    #define F21(x,y,z) (((x)&(y))|((~(x))&(z)))
-    #define F31(x,y,z) (((x)|(~(y)))^(z))
-    #define F41(x,y,z) (((x)&(z))|((y)&(~(z))))
-    #define F51(x,y,z) ((x)^((y)|(~(z))))
-    #define RL32(x,n) (((x)<<(n))|((x)>>(32-(n))))
+    uint32_t H0=0x67452301,H1=0xEFCDAB89,H2=0x98BADCFE,H3=0x10325476,H4=0xC3D2E1F0;
+    const uint32_t K0[5]={0,0x5A827999,0x6ED9EBA1,0x8F1BBCDC,0xA953FD4E};
+    const uint32_t K1[5]={0x50A28BE6,0x5C4DD124,0x6D703EF3,0x7A6D76E9,0};
+    /* right message order */
+    const uint32_t R0[5][16]={            {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15},{7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8},{3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12},{1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2},{4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13}};
+    /* left message order */
+    const uint32_t R1[5][16]={            {5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12},{6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2},{15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13},{8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14},{12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11}};
+    /* right shifts */
+    const uint32_t S0[5][16]={            {11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8},{12,13,11,15,6,9,9,7,12,15,11,13,7,15,7,12},{13,15,14,11,7,7,6,12,13,13,11,15,9,11,9,7},{9,9,13,15,6,14,8,11,13,15,10,14,10,13,9,13},{15,5,8,11,14,14,6,14,6,9,12,9,14,5,15,11}};
+    /* left shifts */
+    const uint32_t S1[5][16]={            {8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6},{9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11},{9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5},{15,5,8,11,14,14,6,14,6,9,12,9,5,15,11,12},{8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11}};
     
-    /* padding */
-    uint64_t bitlen = (uint64_t)len * 8;
-    uint32_t padded = len + 9;
-    uint32_t blkcnt = (padded + 63) / 64;
-    for(uint32_t b=0; b<blkcnt; b++) {
+    uint64_t bitlen=(uint64_t)len*8;
+    uint32_t padded=len+9;
+    uint32_t blkcnt=(padded+63)/64;
+    for(uint32_t b=0;b<blkcnt;b++){
         uint8_t blk[64];
-        for(int i=0;i<64;i++) blk[i]=0;
-        uint32_t poff = b*64;
-        for(uint32_t i=0; i<64 && (poff+i)<len; i++)
-            blk[i] = msg[poff+i];
-        if(poff+64 > len) {
-            blk[len-poff] = 0x80;
-            if(poff+56 <= len) {
-                for(int i=0;i<8;i++) blk[56+i] = (uint8_t)(bitlen >> (i*8));
-            }
+        for(int i=0;i<64;i++)blk[i]=0;
+        uint32_t poff=b*64;
+        for(uint32_t i=0;i<64&&(poff+i)<len;i++) blk[i]=msg[poff+i];
+        if(poff+64>len){
+            blk[len-poff]=0x80;
+            if(poff+56<=len) for(int i=0;i<8;i++) blk[56+i]=(uint8_t)(bitlen>>(i*8));
         }
-        
-        /* X: 16 little-endian words */
         uint32_t X[16];
-        for(int i=0;i<16;i++)
-            X[i] = blk[i*4] | ((uint32_t)blk[i*4+1]<<8) |
-                   ((uint32_t)blk[i*4+2]<<16) | ((uint32_t)blk[i*4+3]<<24);
+        for(int i=0;i<16;i++) X[i]=blk[i*4]|((uint32_t)blk[i*4+1]<<8)|((uint32_t)blk[i*4+2]<<16)|((uint32_t)blk[i*4+3]<<24);
         
-        /* state */
-        uint32_t r0=H0, r1=H1, r2=H2, r3=H3, r4=H4;
-        uint32_t l0=H0, l1=H1, l2=H2, l3=H3, l4=H4;
-        
-        for(int j=0; j<80; j++) {
-            int rd = j/16;
-            int pos = j%16;
-            /* right line */
-            uint32_t f;
-            if(rd==0) f=F1(r1,r2,r3); else if(rd==1) f=F21(r1,r2,r3);
-            else if(rd==2) f=F31(r1,r2,r3); else if(rd==3) f=F41(r1,r2,r3);
-            else f=F51(r1,r2,r3);
-            uint32_t t = RL32(r0 + f + X[RR[rd][pos]] + KR[rd], SR[rd][pos]) + r4;
-            r0=r4; r4=r3; r3=RL32(r2,10); r2=r1; r1=t;
-            /* left line */
-            if(rd==0) f=F51(l1,l2,l3); else if(rd==1) f=F41(l1,l2,l3);
-            else if(rd==2) f=F31(l1,l2,l3); else if(rd==3) f=F21(l1,l2,l3);
-            else f=F1(l1,l2,l3);
-            t = RL32(l0 + f + X[RL[rd][pos]] + KL[rd], SL[rd][pos]) + l4;
-            l0=l4; l4=l3; l3=RL32(l2,10); l2=l1; l1=t;
+        uint32_t A=H0,B=H1,C=H2,D=H3,E=H4;
+        uint32_t Ap=H0,Bp=H1,Cp=H2,Dp=H3,Ep=H4;
+        for(int j=0;j<80;j++){
+            int rd=j/16; int p=j%16;
+            uint32_t t=d_rmd_rol(A+d_rmd_fr(rd,B,C,D)+X[R0[rd][p]]+K0[rd],S0[rd][p])+E;
+            A=E;E=D;D=d_rmd_rol(C,10);C=B;B=t;
+            uint32_t tp=d_rmd_rol(Ap+d_rmd_fl(rd,Bp,Cp,Dp)+X[R1[rd][p]]+K1[rd],S1[rd][p])+Ep;
+            Ap=Ep;Ep=Dp;Dp=d_rmd_rol(Cp,10);Cp=Bp;Bp=tp;
         }
-        
-        /* combine */
-        uint32_t t = H1 + r2 + l3;
-        H1 = H2 + r3 + l4;
-        H2 = H3 + r4 + l0;
-        H3 = H4 + r0 + l1;
-        H4 = H0 + r1 + l2;
-        H0 = t;
+        uint32_t t=H1+C+Dp;H1=H2+D+Ep;H2=H3+E+Ap;
+        H3=H4+A+Bp;H4=H0+B+Cp;H0=t;
     }
-    
-    /* output little-endian */
-    out[0]=(uint8_t)H0; out[1]=(uint8_t)(H0>>8); out[2]=(uint8_t)(H0>>16); out[3]=(uint8_t)(H0>>24);
-    out[4]=(uint8_t)H1; out[5]=(uint8_t)(H1>>8); out[6]=(uint8_t)(H1>>16); out[7]=(uint8_t)(H1>>24);
-    out[8]=(uint8_t)H2; out[9]=(uint8_t)(H2>>8); out[10]=(uint8_t)(H2>>16); out[11]=(uint8_t)(H2>>24);
-    out[12]=(uint8_t)H3; out[13]=(uint8_t)(H3>>8); out[14]=(uint8_t)(H3>>16); out[15]=(uint8_t)(H3>>24);
-    out[16]=(uint8_t)H4; out[17]=(uint8_t)(H4>>8); out[18]=(uint8_t)(H4>>16); out[19]=(uint8_t)(H4>>24);
-    
-    #undef F1
-    #undef F21
-    #undef F31
-    #undef F41
-    #undef F51
-    #undef RL32
+    out[0]=(uint8_t)H0;out[1]=(uint8_t)(H0>>8);out[2]=(uint8_t)(H0>>16);out[3]=(uint8_t)(H0>>24);
+    out[4]=(uint8_t)H1;out[5]=(uint8_t)(H1>>8);out[6]=(uint8_t)(H1>>16);out[7]=(uint8_t)(H1>>24);
+    out[8]=(uint8_t)H2;out[9]=(uint8_t)(H2>>8);out[10]=(uint8_t)(H2>>16);out[11]=(uint8_t)(H2>>24);
+    out[12]=(uint8_t)H3;out[13]=(uint8_t)(H3>>8);out[14]=(uint8_t)(H3>>16);out[15]=(uint8_t)(H3>>24);
+    out[16]=(uint8_t)H4;out[17]=(uint8_t)(H4>>8);out[18]=(uint8_t)(H4>>16);out[19]=(uint8_t)(H4>>24);
 }
 
 /* ================================================================
