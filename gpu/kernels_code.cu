@@ -1,35 +1,32 @@
 /* ================================================================
- *  KERNELS_CODE.CU — All GPU kernels for BTC recovery
- *  ملف منفصل لـ device compilation مع main.cu
+ *  KERNELS_CODE.CU — All GPU kernels
+ *  معزول في ملف CU منفصل → device link مع main.cu
  * ================================================================ */
 
 #include <cuda_runtime.h>
 #include <stdint.h>
 
-/* ننقل تعريف check.h هنا — مقارنة 8 targets */
-__constant__ uint8_t d_targets[8*20];
+/* From main.cu */
+extern __constant__ uint8_t d_targets[8*20];
+extern __constant__ char d_dict[8192];
+extern __constant__ char d_phrases[4096*256];
+extern __constant__ int d_num_phrases;
+extern __constant__ uint8_t d_block_hashes[200000*32];
 
-/* We only include the device functions, no __global__ here yet */
 #include "kernels.cuh"
-
-/* Constant memory */
-__constant__ char d_dict[8192];
-__constant__ char d_phrases[4096*256];
-__constant__ int d_num_phrases;
-__constant__ uint8_t d_block_hashes[200000*32];
 
 /* Device strlen */
 __device__ static int n_strlen(const char *s) { int i=0; while(s[i]) i++; return i; }
 
-/* CHECK MACRO */
+/* CHK macro — same as in original gpu_hypo_small.cuh */
 #define CHK(pk,f,fk) do { \
-    if(*(f)) break; \
+    if(*(int*)f) break; \
     uint64_t __k[4]; for(int i=0;i<4;i++)__k[i]= \
         ((uint64_t)(pk)[i*8]<<56)|((uint64_t)(pk)[i*8+1]<<48)|((uint64_t)(pk)[i*8+2]<<40)|((uint64_t)(pk)[i*8+3]<<32)|\
         ((uint64_t)(pk)[i*8+4]<<24)|((uint64_t)(pk)[i*8+5]<<16)|((uint64_t)(pk)[i*8+6]<<8)|(pk)[i*8+7]; \
     uint8_t __h[20]; if(!d_pk2h160(__k,__h))break; \
     for(int t=0;t<8;t++){int m=1; for(int i=0;i<20;i++)if(__h[i]!=d_targets[t*20+i]){m=0;break;} \
-        if(m){atomicExch((int*)f,1);for(int i=0;i<4;i++)fk[i]=__k[i];return;}} \
+        if(m){atomicExch((int*)f,1);for(int i=0;i<4;i++)fk[i]=__k[i];return;} } \
 } while(0)
 
 /* H21 */
@@ -41,12 +38,12 @@ __global__ void k11(void *f, void *fk) { if(threadIdx.x||blockIdx.x)return;
     uint8_t pk[32]; int p=0; while(d_dict[p]){int sl=n_strlen(d_dict+p);
         d_sha256((const uint8_t*)(d_dict+p),sl,pk);CHK(pk,f,fk);p+=sl+1;} }
 
-/* H14 */
+/* H14 dict */
 __global__ void k14(void *f, void *fk) { if(threadIdx.x||blockIdx.x)return;
     uint8_t pk[32]; int p=0; while(d_dict[p]){int sl=n_strlen(d_dict+p);
         d_sha256((const uint8_t*)(d_dict+p),sl,pk);CHK(pk,f,fk);p+=sl+1;} }
 
-/* H15 */
+/* H15 dict */
 __global__ void k15(void *f, void *fk) { if(threadIdx.x||blockIdx.x)return;
     uint8_t pk[32]; int p=0; while(d_dict[p]){int sl=n_strlen(d_dict+p);
         d_sha256((const uint8_t*)(d_dict+p),sl,pk);CHK(pk,f,fk);p+=sl+1;} }
@@ -60,12 +57,12 @@ __global__ void k41(void *f, void *fk) { if(threadIdx.x||blockIdx.x)return;
         for(int j=1;j<sl;j++)b[j]=s[j];
         d_sha256((const uint8_t*)b,sl,pk);CHK(pk,f,fk);p+=sl+1;} }
 
-/* H42-H35, H26, H27, H29, H25 — all generic dict */
+/* H42-H35, H26, H27, H29, H25 — generic dict */
 __global__ void k_gentxt(void *f, void *fk) { if(threadIdx.x||blockIdx.x)return;
     uint8_t pk[32]; int p=0; while(d_dict[p]){int sl=n_strlen(d_dict+p);
         d_sha256((const uint8_t*)(d_dict+p),sl,pk);CHK(pk,f,fk);p+=sl+1;} }
 
-/* H28: sequential */
+/* H28: sequential SHA256(i) */
 __global__ void k28(uint64_t st,uint64_t cn,void *f,void *fk) {
     uint64_t tid=blockIdx.x*blockDim.x+threadIdx.x; if(tid>=cn||*(int*)f)return;
     uint32_t v=(uint32_t)(st+tid); uint8_t m[4]={(uint8_t)(v>>24),(uint8_t)(v>>16),(uint8_t)(v>>8),(uint8_t)v};
@@ -84,7 +81,7 @@ __global__ void k20(uint64_t cn,void *f,void *fk) {
     uint32_t v=(uint32_t)(tid&0xFFFFFFFF); uint8_t m[4]={(uint8_t)(v>>24),(uint8_t)(v>>16),(uint8_t)(v>>8),(uint8_t)v};
     uint8_t pk[32]; d_sha256(m,4,pk); CHK(pk,f,fk); }
 
-/* H36: timestamp ms sweep */
+/* H36: timestamp ms */
 __global__ void k36(uint64_t st,uint64_t cn,void *f,void *fk) {
     uint64_t tid=blockIdx.x*blockDim.x+threadIdx.x; if(tid>=cn||*(int*)f)return;
     uint64_t ms=st+tid; uint8_t m[8]; for(int i=0;i<8;i++) m[7-i]=(uint8_t)(ms>>(i*8));
@@ -137,25 +134,4 @@ __global__ void k18(void *f, void *fk) {
     for(int x=0;x<al;x++)buf[x]=a[x];buf[al]=' ';
     for(int x=0;x<bl;x++)buf[al+1+x]=b[x];buf[al+1+bl]=0;
     uint8_t pk[32]; d_sha256((const uint8_t*)buf,al+1+bl,pk);CHK(pk,f,fk);
-}
-
-/* Dictionary wrapper: sends dict, runs correct kernel, returns found */
-extern "C" int run_dict_gpu(int hypo_id, const char *host_dict, int dict_size,
-                            volatile int *d_flag, volatile uint64_t *d_fk) {
-    cudaMemcpyToSymbol(d_dict, host_dict, 8192);
-    int h_flag=0; cudaMemcpy(d_flag,&h_flag,sizeof(int),cudaMemcpyHostToDevice);
-    uint64_t hz[4]={0}; cudaMemcpy(d_fk,hz,4*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    switch(hypo_id){
-        case 21: k21<<<1,1>>>(d_flag,d_fk); break;
-        case 11: k11<<<1,1>>>(d_flag,d_fk); break;
-        case 14: k14<<<1,1>>>(d_flag,d_fk); break;
-        case 15: k15<<<1,1>>>(d_flag,d_fk); break;
-        case 41: k41<<<1,1>>>(d_flag,d_fk); break;
-        default: k_gentxt<<<1,1>>>(d_flag,d_fk); break;
-    }
-    cudaDeviceSynchronize();
-    cudaMemcpy(&h_flag,d_flag,sizeof(int),cudaMemcpyDeviceToHost);
-    if(h_flag){ uint64_t h_fk[4]; cudaMemcpy(h_fk,d_fk,4*sizeof(uint64_t),cudaMemcpyDeviceToHost);
-        return (int)(h_fk[0]&0xFFFFFFFF); /* placeholder — returns 1 if found */ }
-    return 0;
 }
