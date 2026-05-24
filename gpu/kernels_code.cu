@@ -216,6 +216,34 @@ __global__ void k_sanity(void*f,void*fk){
     check_return(pk,f,fk);
 }
 
+/* DEBUG: تعمق في الفحص */
+__global__ void k_debug_test(void){
+    if(threadIdx.x||blockIdx.x)return;
+    uint64_t k[4];
+    /* ترجمة pk[31]=1 → k[0] = 1 (أقل 64 بت) */
+    k[0]=1; k[1]=0; k[2]=0; k[3]=0;
+    printf("[DBG] k[0]=%016llx k[1]=%016llx k[2]=%016llx k[3]=%016llx\n",
+        (unsigned long long)k[0], (unsigned long long)k[1],
+        (unsigned long long)k[2], (unsigned long long)k[3]);
+    
+    uint8_t h160[20];
+    int ok = d_pk2h160(k, h160);
+    printf("[DBG] d_pk2h160 ok=%d\n", ok);
+    if(ok){
+        printf("[DBG] h160="); for(int i=0;i<20;i++) printf("%02x",h160[i]); printf("\n");
+        /* مقارنة مع compressed */
+        uint8_t exp[]={0x75,0x1e,0x76,0xe8,0x19,0x91,0x96,0xd4,0x54,0x94,0x1c,0x45,0xd1,0xb3,0xa3,0x23,0xf1,0x43,0x3b,0xd6};
+        int m=1; for(int i=0;i<20;i++) if(h160[i]!=exp[i]){m=0;break;}
+        printf("[DBG] Compressed match: %s\n", m?"YES!":"NO");
+        /* مقارنة مع uncompressed */
+        uint8_t exp2[]={0x91,0xb2,0x4b,0xf9,0xf5,0x28,0x85,0x32,0x96,0x0a,0xc6,0x87,0xab,0xb0,0x35,0x12,0x7b,0x1d,0x28,0xa5};
+        m=1; for(int i=0;i<20;i++) if(h160[i]!=exp2[i]){m=0;break;}
+        printf("[DBG] Uncompressed match: %s\n", m?"YES!":"NO");
+    } else {
+        printf("[DBG] SCALAR REJECTED!\n");
+    }
+}
+
 /* H52: كل target address كـ string بالكامل */
 __global__ void k52(void*f,void*fk){
     if(threadIdx.x||blockIdx.x)return;
