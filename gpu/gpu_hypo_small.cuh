@@ -9,6 +9,11 @@
 
 #include "kernels.cuh"
 
+/* Device-side strlen: CUDA may not have strlen in device code (esp. sm_100) */
+__device__ static int n_strlen(const char *s) {
+    int i=0; while(s[i]) i++; return i;
+}
+
 /* Shared CHECK macro — pk bytes → d_pk2h160 → compare with 8 targets */
 /* Uses k and h160 as locals, target_base[t*20 + i] */
 #define CHECK_AND_RETURN(pk, found_flag, found_key_out) do {                            \
@@ -51,7 +56,7 @@ __global__ void k_h11(volatile int *f, volatile uint64_t *fk) {
         "1234567890","abcdef","password","passw0rd","12345678",
         "btc123","btc2010","hello","HELLO","world","WORLD",NULL};
     uint8_t pk[32];
-    for(int i=0;w[i];i++){d_sha256((const uint8_t*)w[i],strlen(w[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;w[i];i++){d_sha256((const uint8_t*)w[i],n_strlen(w[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H14: Timestamp strings (~12) */
@@ -61,7 +66,7 @@ __global__ void k_h14(volatile int *f, volatile uint64_t *fk) {
         "1284608803","1285880600","1268811438","1268866685",
         "1268894549","1268921836","1268933538","1268943264",NULL};
     uint8_t pk[32];
-    for(int i=0;ts[i];i++){d_sha256((const uint8_t*)ts[i],strlen(ts[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;ts[i];i++){d_sha256((const uint8_t*)ts[i],n_strlen(ts[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H15: Date format strings (~70) */
@@ -78,7 +83,7 @@ __global__ void k_h15(volatile int *f, volatile uint64_t *fk) {
         "July 11 2010","July 15 2010","September 10 2010",
         NULL};
     uint8_t pk[32];
-    for(int i=0;d[i];i++){d_sha256((const uint8_t*)d[i],strlen(d[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;d[i];i++){d_sha256((const uint8_t*)d[i],n_strlen(d[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H41: Leet words (~60) */
@@ -90,7 +95,7 @@ __global__ void k_h41(volatile int *f, volatile uint64_t *fk) {
         "2010","march","july","fifty","hundred","rich","lucky","empty","null",NULL};
     uint8_t pk[32];
     for(int i=0;w[i];i++){
-        d_sha256((const uint8_t*)w[i],strlen(w[i]),pk);CHECK_AND_RETURN(pk,f,fk);
+        d_sha256((const uint8_t*)w[i],n_strlen(w[i]),pk);CHECK_AND_RETURN(pk,f,fk);
         /* Capitalize */
         char b[128]; const char *s=w[i]; b[0]=(s[0]>='a'&&s[0]<='z')?(s[0]-32):s[0];
         int j=1; while(s[j]){b[j]=s[j];j++;} b[j]=0;
@@ -109,7 +114,7 @@ __global__ void k_h42(volatile int *f, volatile uint64_t *fk) {
         "decafc0ffee","c0ffee","baad","f00d","b00b5",
         NULL};
     uint8_t pk[32];
-    for(int i=0;h[i];i++){d_sha256((const uint8_t*)h[i],strlen(h[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;h[i];i++){d_sha256((const uint8_t*)h[i],n_strlen(h[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H43: Unicode/emoji combos (~30) */
@@ -123,7 +128,7 @@ __global__ void k_h43(volatile int *f, volatile uint64_t *fk) {
         "฿itcoin","฿","฿TC",
         NULL};
     uint8_t pk[32];
-    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],n_strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H30: Amount words (~27) */
@@ -135,7 +140,7 @@ __global__ void k_h30(volatile int *f, volatile uint64_t *fk) {
         "my50","my100","my200","my400","my200btc","my400btc","my1200btc",
         "50coins","100coins","200coins","400coins",NULL};
     uint8_t pk[32];
-    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],n_strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H31: Date passphrases (~40) */
@@ -149,7 +154,7 @@ __global__ void k_h31(volatile int *f, volatile uint64_t *fk) {
         "March16","July15","September10","September16",
         NULL};
     uint8_t pk[32];
-    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],n_strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H32: Date+amount combos (~24) */
@@ -161,7 +166,7 @@ __global__ void k_h32(volatile int *f, volatile uint64_t *fk) {
         "03162010_200","07152010_400","09102010_1200",
         NULL};
     uint8_t pk[32];
-    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],n_strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H33: Mining words (~25) */
@@ -173,7 +178,7 @@ __global__ void k_h33(volatile int *f, volatile uint64_t *fk) {
         "poolminer","regular50","split50",
         NULL};
     uint8_t pk[32];
-    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;m[i];i++){d_sha256((const uint8_t*)m[i],n_strlen(m[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H35: Periodic patterns (~17) */
@@ -184,7 +189,7 @@ __global__ void k_h35(volatile int *f, volatile uint64_t *fk) {
         "weekly50","regular50",
         NULL};
     uint8_t pk[32];
-    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],n_strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H34: Full datetime strings (~12ts × 8fmt = 96) */
@@ -213,7 +218,7 @@ __global__ void k_h26(volatile int *f, volatile uint64_t *fk) {
         "satoshi","satoshi wallet",
         NULL};
     uint8_t pk[32];
-    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],n_strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H27: URL brainwallets (~50) */
@@ -229,7 +234,7 @@ __global__ void k_h27(volatile int *f, volatile uint64_t *fk) {
         "http://www.bitcoin.org",
         NULL};
     uint8_t pk[32];
-    for(int i=0;u[i];i++){d_sha256((const uint8_t*)u[i],strlen(u[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;u[i];i++){d_sha256((const uint8_t*)u[i],n_strlen(u[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* H29: Bitcoin+suffix patterns (7pre × 42sfx = 294) */
@@ -245,7 +250,7 @@ __global__ void k_h29(volatile int *f, volatile uint64_t *fk) {
     uint8_t pk[32]; char buf[128];
     for(int pi=0;pre[pi];pi++){
         for(int si=0;sfx[si];si++){
-            int pl=(int)strlen(pre[pi]), sl=(int)strlen(sfx[si]);
+            int pl=(int)n_strlen(pre[pi]), sl=(int)n_strlen(sfx[si]);
             for(int x=0;x<pl;x++) buf[x]=pre[pi][x];
             for(int x=0;x<sl;x++) buf[pl+x]=sfx[si][x];
             buf[pl+sl]=0;
@@ -270,7 +275,7 @@ __global__ void k_h25(volatile int *f, volatile uint64_t *fk) {
         "satoshi dice","bitcoin faucet","faucet",
         NULL};
     uint8_t pk[32];
-    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
+    for(int i=0;p[i];i++){d_sha256((const uint8_t*)p[i],n_strlen(p[i]),pk);CHECK_AND_RETURN(pk,f,fk);}
 }
 
 /* ======================= MEDIUM: multi-thread kernels ======================= */
@@ -294,9 +299,9 @@ __global__ void k_h01(volatile int *f, volatile uint64_t *fk) {
     uint8_t pk[32];
     for(int vi=0;v[vi];vi++){
         if(*f) return;
-        char buf[512]; int pl=(int)strlen(ph);
+        char buf[512]; int pl=(int)n_strlen(ph);
         for(int i=0;i<pl;i++)buf[i]=ph[i]; buf[pl]=0;
-        int sl=(int)strlen(v[vi]+2);
+        int sl=(int)n_strlen(v[vi]+2);
         for(int i=0;i<sl;i++)buf[pl+i]=(v[vi]+2)[i]; buf[pl+sl]=0;
         d_sha256((const uint8_t*)buf,pl+sl,pk);
         CHECK_AND_RETURN(pk,f,fk);
@@ -312,7 +317,7 @@ __global__ void k_h09(volatile int *f, volatile uint64_t *fk) {
     uint8_t pk[32];
     for(int yi=0;yi<5;yi++){
         if(*f) return;
-        char buf[512]; int pl=(int)strlen(ph);
+        char buf[512]; int pl=(int)n_strlen(ph);
         for(int i=0;i<pl;i++)buf[i]=ph[i];
         char y[16]; int yl=0;
         /* itoa yrs[yi] */
@@ -343,7 +348,7 @@ __global__ void k_h18(volatile int *f, volatile uint64_t *fk) {
     if(i>=j) return;
     const char *p1=d_phrases+i*256, *p2=d_phrases+j*256;
     char buf[512];
-    int l1=(int)strlen(p1), l2=(int)strlen(p2);
+    int l1=(int)n_strlen(p1), l2=(int)n_strlen(p2);
     for(int x=0;x<l1;x++)buf[x]=p1[x]; buf[l1]=' ';
     for(int x=0;x<l2;x++)buf[l1+1+x]=p2[x]; buf[l1+1+l2]=0;
     uint8_t pk[32]; d_sha256((const uint8_t*)buf,l1+1+l2,pk);
