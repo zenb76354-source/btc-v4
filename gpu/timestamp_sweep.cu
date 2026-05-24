@@ -20,6 +20,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "../common/targets.h"
 #include "../common/check.h"
 #include "kernels.cuh"
